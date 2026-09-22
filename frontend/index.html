@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitMusic – Turn your GitHub activity into sound and light</title>
+  <meta name="description" content="GitMusic transforms your GitHub contribution streak into real-time sound and light through a custom IoT device powered by XIAO ESP32-S3." />
+  <meta name="theme-color" content="#0d1117" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Ambient background particles ── -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="ambient-orb orb-1" aria-hidden="true"></div>
+  <div class="ambient-orb orb-2" aria-hidden="true"></div>
+
+  <main class="container" role="main">
+
+    <!-- ── Header ── -->
+    <header class="hero" role="banner">
+      <div class="logo-wrap">
+        <svg class="logo-icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+          <circle cx="24" cy="24" r="22" stroke="url(#grad)" stroke-width="2"/>
+          <path d="M14 30 Q19 14 24 24 Q29 34 34 18" stroke="#39d353" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <circle cx="24" cy="24" r="3" fill="#39d353"/>
+          <defs>
+            <linearGradient id="grad" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#39d353"/>
+              <stop offset="100%" stop-color="#58a6ff"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <h1 class="logo-text">Git<span class="accent">Music</span></h1>
+      </div>
+      <p class="tagline">Turn your GitHub activity into sound&nbsp;and&nbsp;light.</p>
+    </header>
+
+    <!-- ── Device status banner ── -->
+    <div class="device-banner" id="device-banner" role="status" aria-live="polite">
+      <span class="status-dot" id="banner-dot"></span>
+      <span id="banner-text">Connecting to server…</span>
+    </div>
+
+    <!-- ── Main card ── -->
+    <section class="card glass" aria-labelledby="connect-heading">
+
+      <!-- ── Connect form ── -->
+      <div id="connect-panel">
+        <h2 id="connect-heading" class="card-title">Connect to GitMusic</h2>
+        <p class="card-sub">Enter your GitHub username and let your contributions play.</p>
+
+        <div class="input-group">
+          <label for="username-input" class="input-label">
+            <svg class="input-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M10 10a4 4 0 100-8 4 4 0 000 8zm-7 8a7 7 0 1114 0H3z"/>
+            </svg>
+            GitHub Username
+          </label>
+          <div class="input-wrap">
+            <input
+              id="username-input"
+              type="text"
+              class="text-input"
+              placeholder="e.g. torvalds"
+              maxlength="39"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+              aria-required="true"
+            />
+            <span class="input-at">@</span>
+          </div>
+        </div>
+
+        <button id="connect-btn" class="btn btn-primary" type="button">
+          <span class="btn-text">Connect to GitMusic</span>
+          <span class="btn-loader" aria-hidden="true"></span>
+        </button>
+
+        <p class="error-msg hidden" id="connect-error" role="alert" aria-live="assertive"></p>
+      </div>
+
+      <!-- ── Session panel (shown after successful connect) ── -->
+      <div id="session-panel" class="hidden">
+
+        <div class="session-header">
+          <div class="avatar-wrap">
+            <img id="gh-avatar" src="" alt="GitHub avatar" class="gh-avatar" loading="lazy" />
+            <span class="avatar-glow" aria-hidden="true"></span>
+          </div>
+          <div>
+            <h2 id="gh-username-label" class="session-username"></h2>
+            <p class="session-sub">Session active</p>
+          </div>
+        </div>
+
+        <!-- Stats grid -->
+        <div class="stats-grid" aria-label="GitHub Statistics">
+          <div class="stat-card" id="stat-streak">
+            <div class="stat-icon">🔥</div>
+            <div class="stat-value" id="val-streak">–</div>
+            <div class="stat-label">Current Streak</div>
+          </div>
+          <div class="stat-card" id="stat-longest">
+            <div class="stat-icon">🏆</div>
+            <div class="stat-value" id="val-longest">–</div>
+            <div class="stat-label">Longest Streak</div>
+          </div>
+          <div class="stat-card" id="stat-today">
+            <div class="stat-icon">📅</div>
+            <div class="stat-value" id="val-today">–</div>
+            <div class="stat-label">Today</div>
+          </div>
+          <div class="stat-card" id="stat-total">
+            <div class="stat-icon">⭐</div>
+            <div class="stat-value" id="val-total">–</div>
+            <div class="stat-label">Total Contributions</div>
+          </div>
+          <div class="stat-card" id="stat-weekly">
+            <div class="stat-icon">📊</div>
+            <div class="stat-value" id="val-weekly">–</div>
+            <div class="stat-label">This Week</div>
+          </div>
+          <div class="stat-card" id="stat-monthly">
+            <div class="stat-icon">📈</div>
+            <div class="stat-value" id="val-monthly">–</div>
+            <div class="stat-label">This Month</div>
+          </div>
+        </div>
+
+        <!-- ESP32 status -->
+        <div class="device-info" aria-label="ESP32 Device Status">
+          <div class="device-info-row">
+            <span class="device-info-label">ESP32 Status</span>
+            <span class="device-badge" id="esp-badge">
+              <span class="status-dot status-dot--sm" id="esp-dot"></span>
+              <span id="esp-status-text">Connected</span>
+            </span>
+          </div>
+          <div class="device-info-row">
+            <span class="device-info-label">Device ID</span>
+            <span class="mono">gitmusic-01</span>
+          </div>
+          <div class="device-info-row">
+            <span class="device-info-label">Session ID</span>
+            <span class="mono" id="session-id-label">–</span>
+          </div>
+        </div>
+
+        <button id="disconnect-btn" class="btn btn-danger" type="button">
+          Disconnect
+        </button>
+
+        <p class="error-msg hidden" id="session-error" role="alert" aria-live="assertive"></p>
+      </div>
+
+    </section>
+
+    <!-- ── How it works ── -->
+    <section class="how-it-works" aria-labelledby="how-heading">
+      <h2 id="how-heading" class="section-title">How it works</h2>
+      <ol class="steps-list">
+        <li class="step">
+          <span class="step-num">01</span>
+          <div>
+            <strong>Enter your GitHub username</strong>
+            <p>The backend fetches your contribution data securely – your token never leaves the server.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="step-num">02</span>
+          <div>
+            <strong>Stats are calculated server-side</strong>
+            <p>Streak, total contributions, weekly and monthly counts are computed in Python.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="step-num">03</span>
+          <div>
+            <strong>Data flows to the ESP32</strong>
+            <p>Via a live WebSocket connection, the processed JSON is pushed to the XIAO ESP32-S3.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="step-num">04</span>
+          <div>
+            <strong>Sound &amp; light come alive</strong>
+            <p>The ESP32 drives 364 LEDs, an OLED display, and a MAX98357A audio amplifier to turn your streak into music.</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+  </main>
+
+  <footer class="site-footer" role="contentinfo">
+    <p>GitMusic &copy; 2025 &mdash; XIAO ESP32-S3 IoT Project</p>
+    <p class="footer-links">
+      <a href="https://github.com/Anandhanachu/Gitmusic" target="_blank" rel="noopener">GitHub</a>
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

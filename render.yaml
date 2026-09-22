@@ -1,0 +1,22 @@
+services:
+  # ── Backend (FastAPI) ───────────────────────────────────────────────────
+  - type: web
+    name: gitmusic-backend
+    runtime: python
+    region: oregon
+    plan: free
+    rootDir: .
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: GITHUB_TOKEN
+        sync: false          # Set manually in Render dashboard
+      - key: MOCK_GITHUB
+        value: "false"
+      - key: SESSION_TIMEOUT_SECONDS
+        value: "300"
+      - key: ALLOWED_ORIGINS
+        value: "*"           # Tighten to your frontend URL in production
+      - key: PYTHON_VERSION
+        value: "3.11.0"

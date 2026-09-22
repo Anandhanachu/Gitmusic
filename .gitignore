@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.env
+
+# Secrets
+*.env
+!.env.example
+*.key
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Node (if any future tooling)
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Arduino build artifacts
+*.elf
+*.bin
+*.hex
+build/
