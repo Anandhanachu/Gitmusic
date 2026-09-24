@@ -20,6 +20,16 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from backend directory or project root
+_here = Path(__file__).parent
+for _candidate in [_here / ".env", _here.parent / ".env"]:
+    if _candidate.is_file():
+        load_dotenv(_candidate)
+        break
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,13 +39,22 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from backend.device_manager import device_manager
-from backend.github import get_github_stats
-from backend.models import (
-    ConnectRequest, ConnectResponse,
-    DisconnectRequest, DisconnectResponse,
-)
-from backend.websocket_manager import ws_manager
+try:
+    from backend.device_manager import device_manager
+    from backend.github import get_github_stats
+    from backend.models import (
+        ConnectRequest, ConnectResponse,
+        DisconnectRequest, DisconnectResponse,
+    )
+    from backend.websocket_manager import ws_manager
+except ModuleNotFoundError:
+    from device_manager import device_manager
+    from github import get_github_stats
+    from models import (
+        ConnectRequest, ConnectResponse,
+        DisconnectRequest, DisconnectResponse,
+    )
+    from websocket_manager import ws_manager
 
 # ---------------------------------------------------------------------------
 # Logging

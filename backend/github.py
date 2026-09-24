@@ -13,7 +13,10 @@ from typing import Dict, List, Optional
 
 import httpx
 
-from backend.streak import calculate_all_stats
+try:
+    from backend.streak import calculate_all_stats
+except ModuleNotFoundError:
+    from streak import calculate_all_stats
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +144,11 @@ async def fetch_github_stats(username: str) -> Dict:
 
     stats = calculate_all_stats(contribution_days, today=today)
     stats["username"] = username
+    # Pass raw daily data so device_manager can build the real 7×52 grid
+    stats["raw_days"] = [
+        {"date": d["date"], "count": d.get("contributionCount", 0)}
+        for d in contribution_days
+    ]
     return stats
 
 
@@ -173,28 +181,47 @@ MOCK_USERS: Dict[str, Dict] = {
 async def fetch_github_stats_mock(username: str) -> Dict:
     """
     Return mock GitHub stats for development mode.
-    Any username not in MOCK_USERS gets generic generated data.
+    Now includes raw_days so the 7×52 grid renders correctly on the ESP32.
     """
     import hashlib
     import asyncio
+    from datetime import date, timedelta
 
     # Simulate network latency
     await asyncio.sleep(0.3)
 
     if username.lower() in MOCK_USERS:
-        return dict(MOCK_USERS[username.lower()])
+        base = dict(MOCK_USERS[username.lower()])
+    else:
+        h = int(hashlib.md5(username.encode()).hexdigest(), 16)
+        base = {
+            "username": username,
+            "current_streak": h % 50,
+            "longest_streak": (h % 50) + (h % 30),
+            "today_contributions": h % 10,
+            "total_contributions": h % 2000,
+            "weekly_contributions": h % 40,
+            "monthly_contributions": h % 150,
+        }
 
-    # Generate deterministic mock data based on username hash
-    h = int(hashlib.md5(username.encode()).hexdigest(), 16)
-    return {
-        "username": username,
-        "current_streak": h % 50,
-        "longest_streak": (h % 50) + (h % 30),
-        "today_contributions": h % 10,
-        "total_contributions": h % 2000,
-        "weekly_contributions": h % 40,
-        "monthly_contributions": h % 150,
-    }
+    # Generate realistic mock raw_days for the past 365 days
+    import random
+    rng = random.Random(username.lower())
+    today = date.today()
+    current_streak = base.get("current_streak", 0)
+    raw_days = []
+    for i in range(364, -1, -1):
+        d = today - timedelta(days=i)
+        # During the streak window: guaranteed contributions
+        if i < current_streak:
+            count = rng.randint(1, 12)
+        else:
+            # Outside streak: sparse contributions
+            count = rng.choices([0, 1, 2, 3, 5, 8], weights=[60, 15, 10, 8, 5, 2])[0]
+        raw_days.append({"date": d.isoformat(), "count": count})
+
+    base["raw_days"] = raw_days
+    return base
 
 
 async def get_github_stats(username: str) -> Dict:

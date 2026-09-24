@@ -234,14 +234,62 @@ class DeviceManager:
         """
         Send processed GitHub stats to the ESP32.
 
-        Includes an optional music structure placeholder for future use.
+        Includes real 52-week contribution grid (levels[52][7]) so the ESP32
+        can display the authentic GitHub contribution graph without guessing.
         """
-        import math
+        from datetime import date, timedelta
 
-        # Intensity derived from current streak (capped at 1.0)
+        # ── Build 7×52 contribution level grid ──────────────────────────────
+        # GitHub GraphQL returns daily counts (0..N).
+        # We convert counts to GitHub-style levels 0–4:
+        #   0 = no contributions
+        #   1 = 1-3 contributions
+        #   2 = 4-6 contributions
+        #   3 = 7-9 contributions
+        #   4 = 10+ contributions
+        def count_to_level(count: int) -> int:
+            if count == 0: return 0
+            if count <= 3: return 1
+            if count <= 6: return 2
+            if count <= 9: return 3
+            return 4
+
+        # Build date→count map from raw_days if backend passed it through
+        raw_days = stats.get("raw_days", [])  # list of {date: str, count: int}
+        date_map: dict = {}
+        for entry in raw_days:
+            try:
+                d = date.fromisoformat(entry["date"])
+                date_map[d] = int(entry.get("count", 0))
+            except Exception:
+                pass
+
+        # Build a grid covering the most recent 52 complete weeks + current week.
+        # Column 0 = oldest week, column 51 = current/most-recent week.
+        # Row 0 = Sunday (weekday index 6 in Python), Row 6 = Saturday.
+        today = date.today()
+        # Find the Sunday of the current week
+        days_since_sunday = (today.weekday() + 1) % 7  # Mon=0..Sun=6 → offset
+        current_week_sunday = today - timedelta(days=days_since_sunday)
+        # Start of grid: 51 weeks before current week's Sunday
+        grid_start = current_week_sunday - timedelta(weeks=51)
+
+        # levels[col][row] → col=week (0=oldest), row=day (0=Sun, 6=Sat)
+        levels = [[0] * 7 for _ in range(52)]
+        for col in range(52):
+            week_sunday = grid_start + timedelta(weeks=col)
+            for row in range(7):
+                day = week_sunday + timedelta(days=row)
+                count = date_map.get(day, 0)
+                levels[col][row] = count_to_level(count)
+
+        # Flatten to a 1-D list (col-major, row-inner) to keep JSON small
+        flat_levels = [levels[c][r] for c in range(52) for r in range(7)]
+
+        # ── Audio parameters ─────────────────────────────────────────────────
         streak = stats.get("current_streak", 0)
         intensity = min(1.0, round(streak / 100.0, 3))
-        pattern = streak % 7  # maps to 7 musical notes C-B
+        pattern = streak % 7
 
         message = {
             "type": "github_update",
@@ -252,10 +300,11 @@ class DeviceManager:
             "total_contributions": stats.get("total_contributions", 0),
             "weekly_contributions": stats.get("weekly_contributions", 0),
             "monthly_contributions": stats.get("monthly_contributions", 0),
-            # Future audio/LED fields – ESP32 will use these later
+            # Real contribution level grid: 364 values, 0–4 each
+            "levels": flat_levels,
             "music": {
                 "enabled": True,
-                "pattern": pattern,   # 0-6 → C D E F G A B
+                "pattern": pattern,
                 "intensity": intensity,
             },
         }
