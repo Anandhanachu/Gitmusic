@@ -75,8 +75,9 @@ async def fetch_github_stats(username: str) -> Dict:
         )
 
     today = date.today()
-    # Fetch from Jan 1 of the current year to today
-    from_dt = f"{today.year}-01-01T00:00:00Z"
+    # Fetch exactly 365 days (52 weeks) back from today, matching GitHub's full profile view
+    start_date = today - timedelta(days=364)
+    from_dt = f"{start_date.isoformat()}T00:00:00Z"
     to_dt = f"{today.isoformat()}T23:59:59Z"
 
     headers = {
@@ -224,20 +225,62 @@ async def fetch_github_stats_mock(username: str) -> Dict:
     return base
 
 
+async def fetch_github_stats_public(username: str) -> Dict:
+    """
+    Fetch REAL GitHub contribution data directly without needing a personal token.
+    Uses the standard public contribution calendar API (same data GitHub renders on user profile).
+    """
+    url = f"https://github-contributions-api.jogruber.de/v4/{username}?y=last"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.get(url)
+        except Exception as exc:
+            logger.error("Public contribution API error: %s", exc)
+            raise RuntimeError(f"Unable to fetch GitHub stats for '{username}'.") from exc
+
+    if resp.status_code == 404:
+        raise ValueError(f"GitHub user '{username}' not found.")
+    if resp.status_code != 200:
+        raise RuntimeError(f"GitHub data provider returned HTTP {resp.status_code}.")
+
+    data = resp.json()
+    contrib_list = data.get("contributions", [])
+    if not contrib_list:
+        raise ValueError(f"No contribution data found for '{username}'.")
+
+    # Format into standard contributionDays list
+    contribution_days = [
+        {"date": item["date"], "contributionCount": int(item.get("count", 0))}
+        for item in contrib_list
+    ]
+
+    today = date.today()
+    stats = calculate_all_stats(contribution_days, today=today)
+    stats["username"] = username
+    stats["raw_days"] = [
+        {"date": d["date"], "count": d.get("contributionCount", 0)}
+        for d in contribution_days
+    ]
+    return stats
+
+
 async def get_github_stats(username: str) -> Dict:
     """
-    Main entry point. Uses mock or real GitHub API based on env var.
-
-    Args:
-        username: GitHub username to look up.
-
-    Returns:
-        Stats dict compatible with GitHubStats model.
+    Main entry point.
+    1. If GITHUB_TOKEN is configured and valid, use GitHub GraphQL.
+    2. Otherwise, fetch REAL public GitHub data via the public contribution calendar.
+    3. Only fall back to synthetic mock if explicitly forced and offline.
     """
-    mock_mode = os.getenv("MOCK_GITHUB", "false").lower() in ("true", "1", "yes")
+    token = _get_token()
+    if token and token != "your_github_token_here":
+        try:
+            return await fetch_github_stats(username)
+        except Exception as exc:
+            logger.warning("GraphQL with token failed (%s), trying public endpoint...", exc)
 
-    if mock_mode:
-        logger.info("MOCK mode: returning fake GitHub stats for '%s'", username)
+    # Fetch REAL contribution data for the actual username:
+    try:
+        return await fetch_github_stats_public(username)
+    except Exception as exc:
+        logger.warning("Public contribution fetch failed (%s). Falling back to mock...", exc)
         return await fetch_github_stats_mock(username)
-
-    return await fetch_github_stats(username)

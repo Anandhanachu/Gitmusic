@@ -155,11 +155,11 @@ static const float PENTATONIC_NOTES[] = {
 struct RGB { uint8_t r, g, b; };
 
 static const RGB LEVEL_COLORS[5] = {
-  {  10,  10,  10 },   // level 0 -- empty (dim grey)
-  {  14,  68,  41 },   // level 1 -- #0e4429 dark green
-  {   0, 109,  50 },   // level 2 -- #006d32 mid green
-  {  38, 166,  65 },   // level 3 -- #26a641 bright green
-  {  57, 211,  83 },   // level 4 -- #39d353 vivid green
+  {   2,   2,   2 },   // level 0 -- no activity (almost off)
+  {   0, 140,  45 },   // level 1 -- clear noticeable green
+  {   0, 200,  65 },   // level 2 -- bright green
+  {  40, 240,  90 },   // level 3 -- vivid electric green
+  { 100, 255, 140 },   // level 4 -- brilliant mint green
 };
 
 static const RGB COLOR_USERNAME = {  57, 211,  83 };
@@ -439,7 +439,6 @@ void connectWebSocket() {
     Serial.println("                ✔ WebSocket Connection Established!");
     wsConnected = true;
     lastPing = millis();
-    sendRegistration();
   } else {
     wsConnected = false;
     Serial.println("                ✖ WebSocket Connection Failed!");
@@ -478,7 +477,6 @@ void handleWebSocketEvent(WebsocketsEvent event, String data) {
       if (dma_display) {
         clearDisplay();
         drawText3x5(8, 13, "ONLINE", {57, 211, 83});
-        delay(500);
       }
       break;
     case WebsocketsEvent::ConnectionClosed:
@@ -916,14 +914,14 @@ void tickScrollText() {
 
 void drawStreakCell(int weekCol, int dayRow, uint8_t level, bool flash) {
   int x = GRAPH_LEFT_MARGIN + weekCol;
-  int y = GRAPH_ROW_START + 2 + dayRow * 3;  // 2px top margin
+  int y = GRAPH_ROW_START + 1 + dayRow * 3;  // Rows 9 to 29 (7 rows * 3px = 21px)
 
   if (x < 0 || x >= PANEL_WIDTH) return;
 
   RGB color;
   if (flash) {
     // Bright cyan-green flash for active-column highlight (niyamax "playing" effect)
-    color = (level == 0) ? RGB{ 15, 15, 25 } : RGB{ 100, 220, 180 };
+    color = (level == 0) ? RGB{ 15, 15, 25 } : RGB{ 120, 255, 200 };
   } else {
     color = LEVEL_COLORS[min((int)level, 4)];
   }
