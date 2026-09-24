@@ -246,8 +246,12 @@ async def ws_device(ws: WebSocket):
         while True:
             try:
                 data = await ws.receive_json()
-            except Exception:
-                break  # Client disconnected or sent invalid JSON
+            except WebSocketDisconnect:
+                logger.info("ESP32 WebSocket disconnected normally.")
+                break
+            except Exception as exc:
+                logger.warning("ESP32 receive error: %r (%s)", type(exc), exc)
+                break
 
             msg_type = data.get("type", "")
 

@@ -121,15 +121,18 @@ using namespace websockets;
 #define SAMPLE_RATE   44100
 
 // ==========================================================================
-// DISPLAY LAYOUT
+// DISPLAY LAYOUT (64x32 HUB75 RGB LED Matrix)
 // ==========================================================================
 
 #define USERNAME_ROW_START   0
 #define USERNAME_ROW_END     7
-#define GRAPH_ROW_START      8
-#define GRAPH_COLS           52
-#define GRAPH_ROWS            7
-#define GRAPH_LEFT_MARGIN     6
+
+// 7x52 Contribution Grid: 52 weeks horizontally (X), 7 days vertically (Y)
+// Coordinate mapping: x = gridX + week, y = gridY + day
+const int gridX            = 6;   // Centered horizontally: (64 - 52) / 2 = 6 (X: 6..57)
+const int gridY            = 12;  // Centered vertically in available area (Y: 12..18)
+#define GRAPH_COLS           52   // 52 weeks horizontally (week 0=oldest on left .. week 51=current on right)
+#define GRAPH_ROWS            7   // 7 days vertically (day 0=Sunday .. day 6=Saturday)
 
 // ==========================================================================
 // AUDIO - Pentatonic scale (from niyamax/gitmusic useAudioEngine.js)
@@ -162,7 +165,7 @@ static const RGB LEVEL_COLORS[5] = {
   { 100, 255, 140 },   // level 4 -- brilliant mint green
 };
 
-static const RGB COLOR_USERNAME = {  57, 211,  83 };
+static const RGB COLOR_USERNAME = { 255, 255, 255 };  // White username per spec
 static const RGB COLOR_BG       = {   0,   0,   0 };
 
 // ==========================================================================
@@ -234,7 +237,6 @@ void initMatrix();
 void initI2S();
 void clearDisplay();
 void clearUsernameBanner();
-void drawDivider();
 void drawUsername(const char* name, bool resetScroll);
 void drawStreakGraph(bool fullReveal);
 void drawStreakCell(int weekCol, int dayRow, uint8_t level, bool flash);
@@ -861,18 +863,10 @@ void clearUsernameBanner() {
       dma_display->drawPixelRGB888(x, y, 0, 0, 0);
 }
 
-void drawDivider() {
-  for (int x = 0; x < PANEL_WIDTH; x++) {
-    // Dynamic green-cyan gradient across row 7
-    uint8_t g = (uint8_t)(38 + 24 * sinf((float)x * 0.12f));
-    uint8_t b = (uint8_t)(18 + 18 * cosf((float)x * 0.12f));
-    dma_display->drawPixelRGB888(x, 7, 0, g, b);
-  }
-}
-
 // ==========================================================================
 // USERNAME BANNER (rows 0-7)
 // Centered if fits; otherwise auto-scrolls left (marquee effect)
+// Pure WHITE text: COLOR_USERNAME = {255, 255, 255}
 // ==========================================================================
 
 void drawUsername(const char* name, bool resetScroll) {
@@ -903,39 +897,35 @@ void tickScrollText() {
 
   clearUsernameBanner();
   drawText3x5(scroll.scrollX, 1, gmData.username, COLOR_USERNAME);
-  drawDivider();
 }
 
 // ==========================================================================
-// STREAK GRAPH (rows 8-31)
-// 52 columns x 7 rows of contribution cells.
-// Each cell: 1px wide x 3px tall. 7 rows x 3px = 21px + 3px top margin = 24px.
+// STREAK GRAPH (52 weeks horizontally x 7 days vertically)
+// Mapping: x = gridX + week (0..51), y = gridY + day (0..6)
+// Exactly 1 LED per cell. No transposing, no rotation, no stretching.
 // ==========================================================================
 
 void drawStreakCell(int weekCol, int dayRow, uint8_t level, bool flash) {
-  int x = GRAPH_LEFT_MARGIN + weekCol;
-  int y = GRAPH_ROW_START + 1 + dayRow * 3;  // Rows 9 to 29 (7 rows * 3px = 21px)
+  int x = gridX + weekCol;
+  int y = gridY + dayRow;
 
-  if (x < 0 || x >= PANEL_WIDTH) return;
+  if (x < 0 || x >= PANEL_WIDTH || y < 0 || y >= PANEL_HEIGHT) return;
 
   RGB color;
   if (flash) {
-    // Bright cyan-green flash for active-column highlight (niyamax "playing" effect)
+    // Bright cyan-green flash for active-column highlight (sequencer sweep effect)
     color = (level == 0) ? RGB{ 15, 15, 25 } : RGB{ 120, 255, 200 };
   } else {
     color = LEVEL_COLORS[min((int)level, 4)];
   }
 
-  for (int dy = 0; dy < 3; dy++) {
-    int py = y + dy;
-    if (py < PANEL_HEIGHT)
-      dma_display->drawPixelRGB888(x, py, color.r, color.g, color.b);
-  }
+  // Exactly 1 LED per cell: x = gridX + week, y = gridY + day
+  dma_display->drawPixelRGB888(x, y, color.r, color.g, color.b);
 }
 
 void drawStreakGraph(bool fullReveal) {
-  // Clear graph area
-  for (int y = GRAPH_ROW_START; y < PANEL_HEIGHT; y++)
+  // Clear lower display area below username banner
+  for (int y = USERNAME_ROW_END + 1; y < PANEL_HEIGHT; y++)
     for (int x = 0; x < PANEL_WIDTH; x++)
       dma_display->drawPixelRGB888(x, y, 0, 0, 0);
 
@@ -1002,11 +992,9 @@ void celebrateStreakReveal() {
     for (int w = startCol; w < 52; w++) {
       for (int d = 0; d < GRAPH_ROWS; d++) {
         if (gmData.levels[w][d] > 0) {
-          int x = GRAPH_LEFT_MARGIN + w;
-          int y = GRAPH_ROW_START + 2 + d * 3;
-          for (int dy = 0; dy < 3; dy++) {
-            dma_display->drawPixelRGB888(x, y + dy, 240, 240, 180); // Gold-white sparkle
-          }
+          int x = gridX + w;
+          int y = gridY + d;
+          dma_display->drawPixelRGB888(x, y, 240, 240, 180); // Gold-white sparkle
         }
       }
     }
@@ -1038,10 +1026,9 @@ void startSweepAnimation() {
 
   clearDisplay();
   drawUsername(gmData.username, true);
-  drawDivider();
 
-  // Clear graph area (rows 8-31) once at start
-  for (int y = GRAPH_ROW_START; y < PANEL_HEIGHT; y++) {
+  // Clear lower area below username banner once at start
+  for (int y = USERNAME_ROW_END + 1; y < PANEL_HEIGHT; y++) {
     for (int x = 0; x < PANEL_WIDTH; x++) {
       dma_display->drawPixelRGB888(x, y, 0, 0, 0);
     }
@@ -1062,7 +1049,6 @@ void tickSweepAnimation() {
     displayMode = MODE_STATS;
     drawStreakGraph(true);
     drawUsername(gmData.username, false);
-    drawDivider();
     Serial.println("[Sweep] Done -> MODE_STATS");
     return;
   }
@@ -1117,11 +1103,14 @@ void tickStatsAnimation() {
     uint8_t g = (uint8_t)(200 + 55 * pulse);
     uint8_t b = (uint8_t)(60 + 120 * pulse);
 
-    int x = GRAPH_LEFT_MARGIN + 51;
-    int y = GRAPH_ROW_START + 2 + 6 * 3;
-    for (int dy = 0; dy < 3; dy++) {
-      dma_display->drawPixelRGB888(x, y + dy, r, g, b);
+    // Week 51 (current week). Find today's day row (latest active day in week 51)
+    int todayRow = 6;
+    for (int d = 6; d >= 0; d--) {
+      if (gmData.levels[51][d] > 0) { todayRow = d; break; }
     }
+    int x = gridX + 51;
+    int y = gridY + todayRow;
+    dma_display->drawPixelRGB888(x, y, r, g, b);
   }
 
   // 2. Subtle shimmer wave across active streak columns every 5 seconds

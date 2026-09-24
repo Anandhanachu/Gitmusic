@@ -264,26 +264,30 @@ class DeviceManager:
             except Exception:
                 pass
 
-        # Build a grid covering the most recent 52 complete weeks + current week.
-        # Column 0 = oldest week, column 51 = current/most-recent week.
-        # Row 0 = Sunday (weekday index 6 in Python), Row 6 = Saturday.
+        # Build a grid covering 52 weeks ending on the current week.
+        # Column 0 = oldest week (51 weeks ago), column 51 = current week.
+        # Row 0 = Sunday, Row 1 = Monday, ..., Row 6 = Saturday (GitHub standard).
         today = date.today()
-        # Find the Sunday of the current week
-        days_since_sunday = (today.weekday() + 1) % 7  # Mon=0..Sun=6 → offset
+        # Days since last Sunday (Python Monday=0, Sunday=6)
+        days_since_sunday = (today.weekday() + 1) % 7
         current_week_sunday = today - timedelta(days=days_since_sunday)
-        # Start of grid: 51 weeks before current week's Sunday
+        # Start of grid: 51 weeks before the current week's Sunday
         grid_start = current_week_sunday - timedelta(weeks=51)
 
-        # levels[col][row] → col=week (0=oldest), row=day (0=Sun, 6=Sat)
+        # levels[col][row] → col=week (0..51), row=weekday (0=Sun..6=Sat)
         levels = [[0] * 7 for _ in range(52)]
         for col in range(52):
             week_sunday = grid_start + timedelta(weeks=col)
             for row in range(7):
                 day = week_sunday + timedelta(days=row)
-                count = date_map.get(day, 0)
-                levels[col][row] = count_to_level(count)
+                # Days in the future (later than today in current week) remain 0 (empty/off)
+                if day > today:
+                    levels[col][row] = 0
+                else:
+                    count = date_map.get(day, 0)
+                    levels[col][row] = count_to_level(count)
 
-        # Flatten to a 1-D list (col-major, row-inner) to keep JSON small
+        # Flatten to a 1-D list (col-major: col 0 row 0..6, col 1 row 0..6, ...)
         flat_levels = [levels[c][r] for c in range(52) for r in range(7)]
 
         # ── Audio parameters ─────────────────────────────────────────────────
