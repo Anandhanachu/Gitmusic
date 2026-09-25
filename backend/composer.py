@@ -1,28 +1,26 @@
 """
 composer.py – Transforms GitHub contribution calendar data into an
-authoritative, week-based, dynamic-tempo piano composition and event timeline.
+authoritative, week-by-week piano composition and event timeline.
 
 Design principles (per Master Specification):
- 1. Week-based music:
+ 1. Exactly ONE musical tone per active week:
     - Calendar consists of 52 weeks x 7 days.
-    - Each active week generates its own coherent musical section / phrase.
-    - INACTIVE WEEKS (week contribution total == 0) produce NO music, NO notes, NO highlights.
- 2. Dynamic BPM scaling:
-    - activeWeekCount controls tempo:
-      bpm = MIN_BPM (55) + (activeWeekCount - 1) * 3, capped at MAX_BPM (100).
-      More active weeks = faster music; fewer active weeks = slower music.
- 3. Random selection ONLY from contribution days:
-    - For each active week:
-      activeDays = [d for d in week if d.contribution > 0]
-      highlightCount = random(1, len(activeDays))
-      selectedDays = unique random sample from activeDays (Fisher-Yates / sample without replacement).
-      Never selects zero-contribution days!
+    - Each active week produces a SINGLE musical tone.
+    - Inactive weeks (total contributions == 0) produce NO tone, NO note, NO highlight.
+ 2. Simultaneous highlighted days:
+    - For that single week's tone, randomly selected LEDs from that week's
+      contribution days (> 0 commits) are highlighted SIMULTANEOUSLY.
+    - highlightCount = random(1, len(activeDays)).
+    - Never selects zero-contribution days.
+ 3. Dynamic BPM scaling based on active weeks:
+    - BPM = min(55 + (activeWeekCount - 1) * 3, 100).
+    - Few active weeks = slower tempo; more active weeks = faster tempo.
  4. Deterministic Randomness:
-    - Seeded by username + contribution data so the same profile produces a consistent,
+    - Seeded by username + contribution data so the profile produces a consistent,
       recognizable musical piece every time.
  5. 7 Diatonic Natural Notes & Melodic Structure:
     - Based on C, D, E, F, G, A, B across octaves 3 to 5.
-    - Contribution count influences pitch, octave, velocity, and duration.
+    - Max contribution count and level in the week drive pitch, octave, velocity, and duration.
     - Smooth voice leading between consecutive active weeks.
  6. Authoritative timeline:
     - Shared identically by Backend audio renderer, Frontend visualizer, and ESP32 LEDs.
@@ -84,6 +82,8 @@ def compose_from_github(
 ) -> Dict[str, Any]:
     """
     Transforms GitHub contribution data into a week-by-week piano composition.
+    Exactly ONE tone plays for each active week.
+    For that single tone, randomly selected active days from that week highlight SIMULTANEOUSLY.
 
     levels_grid: 52 columns (weeks 0..51), each with 7 rows (days 0..6, Sun..Sat).
     counts_grid: Optional actual contribution counts grid (52x7). Defaults to levels_grid.
@@ -130,7 +130,10 @@ def compose_from_github(
     current_time_ms = 0
     last_note_pitch = "C4"
 
-    # 4. Generate week-by-week musical phrases
+    # Tone duration per week: 90% of beat duration, leaving 10% breathing room
+    tone_dur_ms = int(beat_ms * 0.90)
+
+    # 4. Generate exactly ONE musical tone per active week
     for active_idx, w in enumerate(active_weeks):
         col_counts = counts_grid[w] if w < len(counts_grid) else [0] * 7
         col_levels = levels_grid[w] if w < len(levels_grid) else [0] * 7
@@ -146,80 +149,63 @@ def compose_from_github(
         # Unique selection without replacement (Fisher-Yates shuffle sample)
         selected_days = sorted(rng.sample(active_days, highlight_count))
 
+        # Bitmask for ESP32 representing all selected days simultaneously
+        day_mask = sum(1 << d for d in selected_days)
+
         # Musical theme for this active week
         theme = CHORD_THEMES[active_idx % len(CHORD_THEMES)]
         palette = theme["palette"]
 
-        # Note duration based on number of events in this week's phrase
-        num_selected = len(selected_days)
-        if num_selected == 1:
-            note_dur_ms = int(beat_ms * 1.8)
-            step_gap_ms = int(beat_ms * 1.5)
-        elif num_selected == 2:
-            note_dur_ms = int(beat_ms * 1.3)
-            step_gap_ms = int(beat_ms * 1.1)
-        elif num_selected == 3:
-            note_dur_ms = int(beat_ms * 1.0)
-            step_gap_ms = int(beat_ms * 0.9)
-        else:
-            note_dur_ms = int(beat_ms * 0.85)
-            step_gap_ms = int(beat_ms * 0.75)
+        # Max contribution count and level among selected days
+        max_cnt = max(col_counts[d] for d in selected_days)
+        max_lvl = max(col_levels[d] for d in selected_days)
+        if max_lvl <= 0:
+            max_lvl = 1
 
-        phrase_start_ms = current_time_ms
+        # Contribution intensity influences palette tone selection
+        target_palette_idx = min(len(palette) - 1, max_lvl - 1)
+        candidate_note = palette[target_palette_idx]
 
-        for note_idx, d in enumerate(selected_days):
-            cnt = col_counts[d] if d < len(col_counts) else 0
-            lvl = col_levels[d] if d < len(col_levels) else 1
-            if lvl <= 0:
-                lvl = 1
+        # Voice leading: ensure smooth transitions from previous active week
+        last_idx = PITCH_TO_INDEX.get(last_note_pitch, 7)
+        best_note = candidate_note
+        best_dist = 999
+        for p_note in palette:
+            p_idx = PITCH_TO_INDEX.get(p_note, 7)
+            dist = abs(p_idx - last_idx)
+            score = dist + (2 if p_note != candidate_note else 0)
+            if score < best_dist:
+                best_dist = score
+                best_note = p_note
 
-            # Contribution count influences pitch, octave, and dynamics
-            # Map level (1..4) and count to palette selection with voice leading
-            target_palette_idx = min(len(palette) - 1, (lvl - 1) + (note_idx % 2))
-            candidate_note = palette[target_palette_idx]
+        selected_note = best_note
+        last_note_pitch = selected_note
 
-            # Voice leading: ensure smooth transitions (prefer notes within a 5th of last_note_pitch)
-            last_idx = PITCH_TO_INDEX.get(last_note_pitch, 7)
-            # Find palette note closest to last_idx while honoring contour
-            best_note = candidate_note
-            best_dist = 999
-            for p_note in palette:
-                p_idx = PITCH_TO_INDEX.get(p_note, 7)
-                dist = abs(p_idx - last_idx)
-                # Bias toward candidate_note while minimizing excessive leap
-                score = dist + (2 if p_note != candidate_note else 0)
-                if score < best_dist:
-                    best_dist = score
-                    best_note = p_note
+        # Dynamics: velocity 60..116 based on contribution intensity
+        vel = 58 + min(max_lvl * 10, 38) + min(int(max_cnt * 1.5), 18)
+        vel = max(55, min(118, vel))
 
-            selected_note = best_note
-            last_note_pitch = selected_note
+        # Exactly ONE event for this week: all selected days highlight SIMULTANEOUSLY during this tone!
+        events.append({
+            "time": current_time_ms,
+            "week": w,
+            "days": selected_days,           # list of days highlighted simultaneously
+            "day": selected_days[0],         # primary day for legacy readers
+            "day_mask": day_mask,            # 7-bit mask for ESP32
+            "note": selected_note,
+            "freq": NOTE_FREQS.get(selected_note, 261.63),
+            "duration": tone_dur_ms,
+            "velocity": vel,
+            "contribution": max_cnt,
+            "level": max_lvl,
+            "led": w * 7 + selected_days[0],
+        })
 
-            # Dynamics: velocity 60..115 based on level and contribution count
-            vel = 58 + min(lvl * 10, 38) + min(int(cnt * 1.5), 18)
-            vel = max(55, min(118, vel))
-
-            event_time = phrase_start_ms + (note_idx * step_gap_ms)
-
-            events.append({
-                "time": event_time,
-                "week": w,
-                "day": d,
-                "contribution": cnt,
-                "level": lvl,
-                "note": selected_note,
-                "freq": NOTE_FREQS.get(selected_note, 261.63),
-                "duration": note_dur_ms,
-                "velocity": vel,
-                "led": w * 7 + d,
-            })
-
-        # Advance timeline for the week's phrase plus a natural breathing rest
-        phrase_len_ms = (num_selected * step_gap_ms) + int(beat_ms * 0.45)
-        current_time_ms = phrase_start_ms + phrase_len_ms
+        # Advance timeline by 1 beat for the next active week
+        current_time_ms += beat_ms
 
     # Final gentle tail for acoustic piano ring-out before seamless loop
-    total_duration_ms = current_time_ms + int(beat_ms * 1.2)
+    total_duration_ms = current_time_ms + int(beat_ms * 0.8)
 
     # Sort events strictly by timestamp for sequencer predictability
     events.sort(key=lambda e: e["time"])

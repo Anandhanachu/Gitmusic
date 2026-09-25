@@ -39,7 +39,8 @@ const state = {
   audioUrl:         null,
   animFrameId:      null,
   playbackStartMs:  0,
-  activeCell:       null,
+  activeCells:      [],
+  lastActiveKey:    null,
 };
 
 // ── DOM references ─────────────────────────────────────────────────────────
@@ -670,10 +671,8 @@ function handlePlaybackLoop() {
 }
 
 function clearCellHighlights() {
-  if (state.activeCell) {
-    state.activeCell.classList.remove('cell-highlight', 'cell-trail');
-    state.activeCell = null;
-  }
+  state.lastActiveKey = null;
+  state.activeCells = [];
   document.querySelectorAll('.cell-highlight, .cell-trail').forEach(el => {
     el.classList.remove('cell-highlight', 'cell-trail');
   });
@@ -694,7 +693,7 @@ function syncAnimationLoop() {
     dom.timelineProgress.style.width = `${pct.toFixed(1)}%`;
   }
 
-  // Find active musical event in timeline and illuminate corresponding cell
+  // Find active musical event in timeline and illuminate corresponding cells simultaneously
   if (state.timeline && Array.isArray(state.timeline.events)) {
     const events = state.timeline.events;
     let currentEvent = null;
@@ -708,26 +707,43 @@ function syncAnimationLoop() {
     }
 
     if (currentEvent) {
-      const targetCell = dom.contribGrid.querySelector(
-        `[data-week="${currentEvent.week}"][data-day="${currentEvent.day}"]`
-      );
+      const days = (currentEvent.days && currentEvent.days.length) ? currentEvent.days : [currentEvent.day];
+      const activeKey = `${currentEvent.week}:${days.join(',')}`;
 
-      if (targetCell && targetCell !== state.activeCell) {
-        if (state.activeCell) {
-          state.activeCell.classList.remove('cell-highlight');
-          state.activeCell.classList.add('cell-trail');
-          const prev = state.activeCell;
-          setTimeout(() => prev.classList.remove('cell-trail'), 400);
+      if (state.lastActiveKey !== activeKey) {
+        state.lastActiveKey = activeKey;
+
+        // Fade out previous active cells
+        if (state.activeCells && state.activeCells.length) {
+          state.activeCells.forEach(cell => {
+            cell.classList.remove('cell-highlight');
+            cell.classList.add('cell-trail');
+            setTimeout(() => cell.classList.remove('cell-trail'), 350);
+          });
         }
-        targetCell.classList.add('cell-highlight');
-        state.activeCell = targetCell;
+
+        // Highlight all selected days of this week simultaneously
+        state.activeCells = [];
+        days.forEach(d => {
+          const targetCell = dom.contribGrid.querySelector(
+            `[data-week="${currentEvent.week}"][data-day="${d}"]`
+          );
+          if (targetCell) {
+            targetCell.classList.add('cell-highlight');
+            state.activeCells.push(targetCell);
+          }
+        });
       }
-    } else if (state.activeCell) {
-      state.activeCell.classList.remove('cell-highlight');
-      state.activeCell.classList.add('cell-trail');
-      const prev = state.activeCell;
-      setTimeout(() => prev.classList.remove('cell-trail'), 400);
-      state.activeCell = null;
+    } else if (state.lastActiveKey) {
+      state.lastActiveKey = null;
+      if (state.activeCells && state.activeCells.length) {
+        state.activeCells.forEach(cell => {
+          cell.classList.remove('cell-highlight');
+          cell.classList.add('cell-trail');
+          setTimeout(() => cell.classList.remove('cell-trail'), 350);
+        });
+        state.activeCells = [];
+      }
     }
   }
 

@@ -7,17 +7,18 @@ sys.path.insert(0, os.path.dirname(__file__))
 from composer import compose_from_github, calculate_bpm
 
 def run_tests():
-    # Test Case 1: 1 active week -> 55 BPM, 1 phrase
+    # Test Case 1: 1 active week -> 55 BPM, exactly 1 tone for the whole week
     grid1 = [[0]*7 for _ in range(52)]
     grid1[10][2] = 3
     t1 = compose_from_github(grid1, username="alice")
     assert t1["bpm"] == 55, f"Expected 55 BPM, got {t1['bpm']}"
     assert t1["active_week_count"] == 1
-    assert len(t1["events"]) == 1
-    assert t1["events"][0]["week"] == 10 and t1["events"][0]["day"] == 2
-    print("Case 1 (1 active week) PASSED: BPM =", t1["bpm"], "Events:", len(t1["events"]))
+    assert len(t1["events"]) == 1, f"Expected 1 event, got {len(t1['events'])}"
+    assert t1["events"][0]["week"] == 10
+    assert t1["events"][0]["days"] == [2]
+    print("Case 1 (1 active week = 1 tone) PASSED: BPM =", t1["bpm"], "Events:", len(t1["events"]))
 
-    # Test Case 2: 5 active weeks -> 67 BPM
+    # Test Case 2: 5 active weeks -> 67 BPM, exactly 5 tones (1 per active week)
     grid2 = [[0]*7 for _ in range(52)]
     for w in [2, 8, 14, 20, 26]:
         grid2[w][1] = 2
@@ -25,7 +26,8 @@ def run_tests():
     t2 = compose_from_github(grid2, username="bob")
     assert t2["bpm"] == 55 + (5 - 1) * 3  # 67 BPM
     assert t2["active_week_count"] == 5
-    print("Case 2 (5 active weeks) PASSED: BPM =", t2["bpm"], "Events:", len(t2["events"]))
+    assert len(t2["events"]) == 5, f"Expected exactly 5 events (1 per week), got {len(t2['events'])}"
+    print("Case 2 (5 active weeks = 5 tones) PASSED: BPM =", t2["bpm"], "Events:", len(t2["events"]))
 
     # Test Case 3: All-zero profile
     grid3 = [[0]*7 for _ in range(52)]
@@ -39,17 +41,18 @@ def run_tests():
     grid4[5][3] = 7
     t4 = compose_from_github(grid4, username="david")
     assert len(t4["events"]) == 1
-    assert t4["events"][0]["week"] == 5 and t4["events"][0]["day"] == 3
-    print("Case 4 (Single contribution day) PASSED: day =", t4["events"][0]["day"])
+    assert t4["events"][0]["week"] == 5 and t4["events"][0]["days"] == [3]
+    print("Case 4 (Single contribution day) PASSED: day =", t4["events"][0]["days"])
 
-    # Test Case 5: 7 contribution days (all days active) -> 1..7 selected unique days
+    # Test Case 5: 7 contribution days (all days active) -> 1..7 selected unique days highlighted simultaneously
     grid5 = [[0]*7 for _ in range(52)]
     grid5[0] = [1, 2, 3, 4, 5, 6, 7]
     t5 = compose_from_github(grid5, username="eve")
-    assert 1 <= len(t5["events"]) <= 7
-    selected_days = [e["day"] for e in t5["events"]]
+    assert len(t5["events"]) == 1, "Expected 1 tone for the week"
+    selected_days = t5["events"][0]["days"]
+    assert 1 <= len(selected_days) <= 7
     assert len(selected_days) == len(set(selected_days)), "Duplicate days found!"
-    print("Case 5 (7 contribution days) PASSED: selected days =", selected_days)
+    print("Case 5 (Simultaneous days in single week tone) PASSED: selected days =", selected_days)
 
     # Test Case 6: Mixed active and inactive weeks -> only active weeks produce music
     grid6 = [[0]*7 for _ in range(52)]
@@ -57,8 +60,9 @@ def run_tests():
     grid6[2][2] = 2 # active
     grid6[4][3] = 3 # active
     t6 = compose_from_github(grid6, username="frank")
-    event_weeks = set(e["week"] for e in t6["events"])
-    assert event_weeks == {0, 2, 4}
+    assert len(t6["events"]) == 3, "Expected exactly 3 tones for 3 active weeks"
+    event_weeks = [e["week"] for e in t6["events"]]
+    assert event_weeks == [0, 2, 4]
     print("Case 6 (Mixed active/inactive weeks) PASSED: active event weeks =", event_weeks)
 
     # Test Case 7: Seeded determinism -> same user + data produces identical composition
@@ -67,7 +71,7 @@ def run_tests():
     assert t7_a["events"] == t7_b["events"], "Deterministic seed failed!"
     print("Case 7 (Deterministic seed) PASSED: Exact match on repeated composition")
 
-    print("\n>>> ALL TEST CASES VERIFIED AND PASSED! <<<")
+    print("\n>>> ALL SINGLE-WEEK-TONE TEST CASES VERIFIED AND PASSED! <<<")
 
 if __name__ == "__main__":
     run_tests()

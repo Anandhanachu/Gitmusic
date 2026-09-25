@@ -244,6 +244,7 @@ struct MusicalEvent {
   uint32_t timeMs;
   uint8_t  week;
   uint8_t  day;
+  uint8_t  dayMask; // 7-bit mask of selected contribution days highlighted simultaneously
   uint8_t  velocity;
 };
 
@@ -254,7 +255,7 @@ uint32_t compositionDurationMs = 29538;
 unsigned long playbackT0 = 0;
 int currentTimelineIdx = 0;
 int activeHighlightWeek = -1;
-int activeHighlightDay = -1;
+uint8_t activeHighlightMask = 0;
 unsigned long activeHighlightEndMs = 0;
 String currentAudioUrl = "";
 TaskHandle_t audioTaskHandle = NULL;
@@ -637,7 +638,11 @@ void handleWebSocketMessage(WebsocketsMessage msg) {
         if (timelineEventCount < MAX_TIMELINE_EVENTS) {
           timelineEvents[timelineEventCount].timeMs   = ev["time"] | 0;
           timelineEvents[timelineEventCount].week     = ev["week"] | 0;
-          timelineEvents[timelineEventCount].day      = ev["day"] | 0;
+          uint8_t d = ev["day"] | 0;
+          timelineEvents[timelineEventCount].day      = d;
+          uint8_t mask = ev["day_mask"] | 0;
+          if (mask == 0) mask = (1 << d);
+          timelineEvents[timelineEventCount].dayMask  = mask;
           timelineEvents[timelineEventCount].velocity = ev["velocity"] | 70;
           timelineEventCount++;
         }
@@ -950,6 +955,18 @@ void audioPlayerTask(void *pvParameters) {
   }
 }
 
+void clearActiveHighlights() {
+  if (activeHighlightWeek >= 0 && activeHighlightMask > 0) {
+    for (int d = 0; d < 7; d++) {
+      if (activeHighlightMask & (1 << d)) {
+        drawStreakCell(activeHighlightWeek, d, gmData.levels[activeHighlightWeek][d], false);
+      }
+    }
+    activeHighlightWeek = -1;
+    activeHighlightMask = 0;
+  }
+}
+
 void tickLEDTimeline() {
   if (playbackState != STATE_PLAYING || timelineEventCount == 0) return;
 
@@ -961,10 +978,7 @@ void tickLEDTimeline() {
     playbackT0 = now;
     elapsedMs = 0;
     currentTimelineIdx = 0;
-    if (activeHighlightWeek >= 0) {
-      drawStreakCell(activeHighlightWeek, activeHighlightDay, gmData.levels[activeHighlightWeek][activeHighlightDay], false);
-      activeHighlightWeek = -1;
-    }
+    clearActiveHighlights();
     Serial.println("[LED Timeline] Looping composition to beginning");
 
     wsClient.send("{\"type\":\"music_loop\"}");
@@ -972,31 +986,34 @@ void tickLEDTimeline() {
 
   // Fade active highlight back to authentic green level color
   if (activeHighlightWeek >= 0 && now >= activeHighlightEndMs) {
-    drawStreakCell(activeHighlightWeek, activeHighlightDay, gmData.levels[activeHighlightWeek][activeHighlightDay], false);
-    activeHighlightWeek = -1;
+    clearActiveHighlights();
   }
 
   // Process timeline events matching current elapsed timestamp
   while (currentTimelineIdx < timelineEventCount && elapsedMs >= timelineEvents[currentTimelineIdx].timeMs) {
     MusicalEvent& ev = timelineEvents[currentTimelineIdx];
 
-    // Clear previous cell highlight
-    if (activeHighlightWeek >= 0) {
-      drawStreakCell(activeHighlightWeek, activeHighlightDay, gmData.levels[activeHighlightWeek][activeHighlightDay], false);
-    }
+    // Clear previous week highlights
+    clearActiveHighlights();
 
     activeHighlightWeek = ev.week;
-    activeHighlightDay = ev.day;
-    activeHighlightEndMs = now + 450; // Visible bloom duration
+    activeHighlightMask = ev.dayMask;
+    activeHighlightEndMs = now + 420; // Visible bloom duration
 
     int x = gridX + ev.week;
-    int y = gridY + ev.day;
 
-    // Draw radiant highlight on the matrix cell
-    if (ev.velocity > 85) {
-      dma_display->drawPixelRGB888(x, y, 255, 255, 255); // Brilliant white peak
-    } else {
-      dma_display->drawPixelRGB888(x, y, 160, 255, 230); // Radiant mint
+    // Draw radiant highlight on ALL selected cells in this week SIMULTANEOUSLY for this week's single tone!
+    for (int d = 0; d < 7; d++) {
+      if (ev.dayMask & (1 << d)) {
+        int y = gridY + d;
+        if (x >= 0 && x < PANEL_WIDTH && y >= 0 && y < PANEL_HEIGHT) {
+          if (ev.velocity > 85) {
+            dma_display->drawPixelRGB888(x, y, 255, 255, 255); // Brilliant white peak
+          } else {
+            dma_display->drawPixelRGB888(x, y, 160, 255, 230); // Radiant mint
+          }
+        }
+      }
     }
 
     currentTimelineIdx++;
@@ -1007,10 +1024,7 @@ void stopSynchronizedMusic() {
   playbackState = STATE_IDLE;
   i2s_zero_dma_buffer(I2S_PORT);
 
-  if (activeHighlightWeek >= 0) {
-    drawStreakCell(activeHighlightWeek, activeHighlightDay, gmData.levels[activeHighlightWeek][activeHighlightDay], false);
-    activeHighlightWeek = -1;
-  }
+  clearActiveHighlights();
 
   Serial.println("[Music] ⏹ Synchronized playback stopped and reset.");
 }

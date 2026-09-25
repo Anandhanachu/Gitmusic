@@ -402,6 +402,7 @@ class DeviceManager:
                 "time": ev["time"],
                 "week": ev["week"],
                 "day": ev["day"],
+                "day_mask": ev.get("day_mask", 1 << ev["day"]),
                 "velocity": ev["velocity"]
             }
             for ev in self._session.timeline.get("events", [])
