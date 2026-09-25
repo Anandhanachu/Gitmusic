@@ -908,16 +908,17 @@ body {
 
 /* Musical synchronised highlight */
 .contrib-cell.cell-highlight {
-  transform: scale(1.6);
-  z-index: 10;
-  box-shadow: 0 0 12px #ffffff, 0 0 20px #39d353;
+  transform: scale(1.7) !important;
+  z-index: 25 !important;
+  box-shadow: 0 0 14px #ffffff, 0 0 24px #39d353, 0 0 32px rgba(57, 211, 83, 0.7) !important;
   background-color: #ffffff !important;
-  border-radius: 3px;
+  border-radius: 3px !important;
 }
 
 .contrib-cell.cell-trail {
-  transform: scale(1.15);
-  box-shadow: 0 0 6px #39d353;
+  transform: scale(1.2) !important;
+  z-index: 15 !important;
+  box-shadow: 0 0 8px #39d353 !important;
 }
 
 /* Timeline scrubber bar */

@@ -194,6 +194,7 @@ struct GitMusicData {
   int     currentStreak   = 0;
   int     longestStreak   = 0;
   int     today           = 0;
+  int     todayRow        = 6;            // day row in week 51 for today (0=Sun..6=Sat)
   int     totalContribs   = 0;
   int     weeklyContribs  = 0;
   int     monthlyContribs = 0;
@@ -705,16 +706,29 @@ void parseGitHubUpdate(DynamicJsonDocument& doc) {
   gmData.currentStreak   =       doc["current_streak"]        | 0;
   gmData.longestStreak   =       doc["longest_streak"]        | 0;
   gmData.today           =       doc["today"]                 | 0;
+  gmData.todayRow        =       doc["today_row"]             | 6;
   gmData.totalContribs   =       doc["total_contributions"]   | 0;
   gmData.weeklyContribs  =       doc["weekly_contributions"]  | 0;
   gmData.monthlyContribs =       doc["monthly_contributions"] | 0;
   gmData.sessionActive   = true;
 
   // ── Parse REAL contribution levels from backend ─────────────────────────
-  // Backend sends flat_levels[364]: col-major, 52 cols × 7 rows (0=Sun)
-  // levels[col][row], col 0 = oldest week, col 51 = current week
+  // Preferred: levels_str (compact 364 chars '0'..'4', zero-allocation, immune to truncation)
   memset(gmData.levels, 0, sizeof(gmData.levels));
-  if (doc.containsKey("levels")) {
+  if (doc.containsKey("levels_str")) {
+    const char* str = doc["levels_str"].as<const char*>();
+    if (str) {
+      int len = strlen(str);
+      int idx = 0;
+      for (int col = 0; col < 52 && idx < len; col++) {
+        for (int row = 0; row < 7 && idx < len; row++, idx++) {
+          uint8_t v = (uint8_t)(str[idx] - '0');
+          gmData.levels[col][row] = (v > 4) ? 4 : v;
+        }
+      }
+      Serial.printf("[Levels] Parsed %d contribution cells from levels_str.\n", idx);
+    }
+  } else if (doc.containsKey("levels")) {
     JsonArray arr = doc["levels"].as<JsonArray>();
     int idx = 0;
     for (int col = 0; col < 52 && idx < (int)arr.size(); col++) {
@@ -1456,6 +1470,9 @@ uint8_t statsPulseStep = 0;
 
 void tickStatsAnimation() {
   if (!gmData.sessionActive) return;
+  // CRITICAL FIX: If synchronized music is playing, do NOT touch display or collide with timeline!
+  if (playbackState == STATE_PLAYING) return;
+
   unsigned long now = millis();
   if (now - lastStatsTick < 100) return; // 10 fps
   lastStatsTick = now;
@@ -1463,19 +1480,16 @@ void tickStatsAnimation() {
   statsPulseStep = (statsPulseStep + 1) % 50; // 5.0 second cycle
 
   // 1. Gently pulse the "Today" cell if user committed today
-  if (gmData.today > 0) {
+  if (gmData.today > 0 && gmData.todayRow >= 0 && gmData.todayRow < 7) {
     float pulse = (sinf((float)statsPulseStep * 0.25f) + 1.0f) * 0.5f;
-    uint8_t r = (uint8_t)(40 + 80 * pulse);
-    uint8_t g = (uint8_t)(200 + 55 * pulse);
-    uint8_t b = (uint8_t)(60 + 120 * pulse);
+    uint8_t baseLevel = gmData.levels[51][gmData.todayRow];
+    RGB baseColor = LEVEL_COLORS[min((int)baseLevel, 4)];
+    uint8_t r = (uint8_t)(baseColor.r + (255 - baseColor.r) * 0.55f * pulse);
+    uint8_t g = (uint8_t)(baseColor.g + (255 - baseColor.g) * 0.55f * pulse);
+    uint8_t b = (uint8_t)(baseColor.b + (220 - baseColor.b) * 0.55f * pulse);
 
-    // Week 51 (current week). Find today's day row (latest active day in week 51)
-    int todayRow = 6;
-    for (int d = 6; d >= 0; d--) {
-      if (gmData.levels[51][d] > 0) { todayRow = d; break; }
-    }
     int x = gridX + 51;
-    int y = gridY + todayRow;
+    int y = gridY + gmData.todayRow;
     dma_display->drawPixelRGB888(x, y, r, g, b);
   }
 }

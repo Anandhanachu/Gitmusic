@@ -494,11 +494,17 @@ if os.path.isdir(FRONTEND_DIR):
 
     @app.get("/", include_in_schema=False)
     async def serve_frontend():
-        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+        return FileResponse(
+            os.path.join(FRONTEND_DIR, "index.html"),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
 
     @app.get("/{filename}", include_in_schema=False)
     async def serve_static(filename: str):
         path = os.path.join(FRONTEND_DIR, filename)
         if os.path.isfile(path):
-            return FileResponse(path)
+            return FileResponse(
+                path,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+            )
         raise HTTPException(status_code=404, detail="File not found.")

@@ -144,10 +144,18 @@ def compose_from_github(
         if not active_days:
             continue
 
-        # Randomly select between 1 and len(active_days) days — ONLY from contribution days
-        highlight_count = rng.randint(1, len(active_days))
-        # Unique selection without replacement (Fisher-Yates shuffle sample)
-        selected_days = sorted(rng.sample(active_days, highlight_count))
+        # Equal probability from 1 to 5 (20% each). Strictly NO 6 or 7 simultaneous LEDs.
+        highlight_count = rng.randint(1, 5)
+
+        if len(active_days) >= highlight_count:
+            # All selected days come from active contribution days
+            selected_days = sorted(rng.sample(active_days, highlight_count))
+        else:
+            # Include all active contribution days; fill remaining up to highlight_count from other days of that week
+            other_days = [d for d in range(7) if d not in active_days]
+            needed = highlight_count - len(active_days)
+            fill_days = rng.sample(other_days, needed) if needed <= len(other_days) else other_days
+            selected_days = sorted(active_days + fill_days)
 
         # Bitmask for ESP32 representing all selected days simultaneously
         day_mask = sum(1 << d for d in selected_days)
@@ -157,8 +165,8 @@ def compose_from_github(
         palette = theme["palette"]
 
         # Max contribution count and level among selected days
-        max_cnt = max(col_counts[d] for d in selected_days)
-        max_lvl = max(col_levels[d] for d in selected_days)
+        max_cnt = max((col_counts[d] if d < len(col_counts) else 0) for d in selected_days)
+        max_lvl = max((col_levels[d] if d < len(col_levels) else 0) for d in selected_days)
         if max_lvl <= 0:
             max_lvl = 1
 

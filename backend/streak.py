@@ -67,11 +67,19 @@ def calculate_current_streak(
     if today is None:
         today = date.today()
 
-    # Determine the starting point: today if they contributed, else yesterday.
+    # Determine the starting point:
+    # 1. Today if user contributed today
+    # 2. Yesterday if user contributed yesterday (active ongoing streak)
+    # 3. Latest recorded date if within 1 day of today (timezone offset tolerance)
+    latest_date = max(contributions.keys()) if contributions else today
     if contributions.get(today, 0) > 0:
         check_date = today
-    else:
+    elif contributions.get(today - timedelta(days=1), 0) > 0:
         check_date = today - timedelta(days=1)
+    elif contributions.get(latest_date, 0) > 0 and abs((today - latest_date).days) <= 1:
+        check_date = latest_date
+    else:
+        return 0
 
     # Walk backwards while there are contributions.
     streak = 0

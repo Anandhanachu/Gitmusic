@@ -323,6 +323,8 @@ class DeviceManager:
             "weekly_contributions": stats.get("weekly_contributions", 0),
             "monthly_contributions": stats.get("monthly_contributions", 0),
             "levels": flat_levels,
+            "levels_str": "".join(str(lvl) for lvl in flat_levels),
+            "today_row": days_since_sunday,
             "music": {
                 "enabled": True,
                 "pattern": pattern,

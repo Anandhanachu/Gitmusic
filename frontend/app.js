@@ -177,8 +177,18 @@ function handleServerMessage(msg) {
 
     case 'music_start':
       console.log('[WS] music_start received');
+      if (msg.timeline) {
+        state.timeline = msg.timeline;
+      }
       if (state.musicState !== 'PLAYING') {
         startSynchronizedPlayback();
+      }
+      break;
+
+    case 'music_prepared':
+      console.log('[WS] music_prepared received');
+      if (msg.timeline) {
+        state.timeline = msg.timeline;
       }
       break;
 
