@@ -758,11 +758,11 @@ body {
   border: 1px solid rgba(139, 148, 158, 0.3);
 }
 
-.badge-preparing {
-  background: rgba(210, 153, 34, 0.15);
-  color: #e3b341;
-  border: 1px solid rgba(210, 153, 34, 0.4);
-  animation: pulse-badge 1.5s ease-in-out infinite;
+.badge-revealing {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+  border: 1px solid rgba(249, 115, 22, 0.45);
+  animation: pulse-badge 1.2s ease-in-out infinite;
 }
 
 .badge-ready {
@@ -845,6 +845,49 @@ body {
   gap: 3px;
   min-width: 620px;
   max-width: 100%;
+}
+
+/* ── niyamax/gitmusic Animated Contribution Reveal ────────────────────────── */
+@keyframes flash-play {
+  0%, 100% {
+    background-color: #161b22;
+    box-shadow: none;
+    transform: scale(1);
+  }
+  50% {
+    background-color: #f97316; /* niyamax accent amber/orange */
+    box-shadow: 0 0 8px #f97316, 0 0 16px rgba(249, 115, 22, 0.45);
+    transform: scale(1.18);
+  }
+}
+
+.contrib-grid.loading {
+  pointer-events: none;
+}
+
+.contrib-grid.loading .day-cell {
+  --anim-duration: 0.4s;
+  background-color: #161b22;
+  animation: flash-play var(--anim-duration, 0.4s) ease-in-out infinite;
+  animation-delay: calc(var(--cell-index) * 30ms);
+}
+
+/* Vary animation speed by column position (3n -> 0.3s, 3n+1 -> 0.5s, 3n+2 -> 0.4s) */
+.contrib-grid.loading .day-cell[data-week-mod="0"] {
+  --anim-duration: 0.3s;
+}
+
+.contrib-grid.loading .day-cell[data-week-mod="1"] {
+  --anim-duration: 0.5s;
+}
+
+.contrib-grid.loading .day-cell[data-week-mod="2"] {
+  --anim-duration: 0.4s;
+}
+
+/* Alternating animation direction for odd cells as in reference */
+.contrib-grid.loading .day-cell:nth-child(odd) {
+  animation-direction: alternate;
 }
 
 .contrib-cell {

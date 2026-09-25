@@ -30,8 +30,10 @@ const state = {
   wsReconnectTimer: null,
   wsReconnectCount: 0,
   pingTimer:        null,
+  isAnimating:      false,  // niyamax-style reveal animation active
+  currentRequestId: 0,      // stale request cancellation
   // Synchronized Music & Timeline state
-  musicState:       'IDLE', // IDLE | PLAYING | STOPPED
+  musicState:       'IDLE', // IDLE | REVEALING | PLAYING | STOPPED
   levels:           null,   // 52x7 array
   timeline:         null,   // { tempo, bpm, duration_ms, events }
   audioUrl:         null,
@@ -274,8 +276,40 @@ async function handleConnect() {
   }
 
   hideError(dom.connectError);
-  setBtnLoading(dom.connectBtn, true);
-  dom.usernameInput.disabled = true;
+
+  const requestId = ++state.currentRequestId;
+  state.isAnimating = true;
+  state.levels = null;
+  state.timeline = null;
+
+  // Immediately enter animated placeholder reveal state (Stage 1)
+  dom.connectPanel.classList.add('hidden');
+  dom.sessionPanel.classList.remove('hidden');
+  dom.ghUsernameLabel.textContent = username;
+  dom.ghAvatar.src = `https://github.com/${username}.png?size=56`;
+  dom.ghAvatar.alt = `${username} avatar`;
+  dom.sessionIdLabel.textContent = '–';
+
+  // Reset stat values to placeholders during reveal
+  setStatValue(dom.valStreak,  '–');
+  setStatValue(dom.valLongest, '–');
+  setStatValue(dom.valToday,   '–');
+  setStatValue(dom.valTotal,   '–');
+  setStatValue(dom.valWeekly,  '–');
+  setStatValue(dom.valMonthly, '–');
+
+  // Disable music controls during reveal
+  if (dom.musicToggleBtn) dom.musicToggleBtn.disabled = true;
+  setMusicState('REVEALING', 'Transforming GitHub activity into GitMusic…');
+
+  // Render the animated placeholder grid
+  renderPlaceholderGrid();
+
+  // Enforce 3000 ms reveal animation timing in parallel with fetch
+  const animationTimer = new Promise(resolve => setTimeout(resolve, 3000));
+
+  let data = null;
+  let fetchError = null;
 
   try {
     const res = await fetch(`${BASE_URL}/api/connect`, {
@@ -284,33 +318,49 @@ async function handleConnect() {
       body: JSON.stringify({ username }),
     });
 
-    const data = await res.json();
-
+    data = await res.json();
     if (!res.ok || !data.success) {
-      const err = data.detail || data.message || 'Connection failed. Please try again.';
-      showConnectError(err);
-      return;
+      fetchError = data.detail || data.message || 'User not found.';
     }
-
-    // Success
-    state.sessionId = data.session_id;
-    state.username  = data.username;
-
-    // Register session with WS so the backend can target us
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'register_session', session_id: state.sessionId }));
-    }
-
-    populateSessionPanel(data);
-    showSessionPanel();
-
   } catch (err) {
     console.error('Connect error:', err);
-    showConnectError('Unable to reach the backend. Is it running?');
-  } finally {
-    setBtnLoading(dom.connectBtn, false);
-    dom.usernameInput.disabled = false;
+    fetchError = 'Unable to reach the backend. Is it running?';
   }
+
+  // Await the ~3-second reveal animation
+  await animationTimer;
+
+  // Ignore stale request if a newer search was initiated
+  if (requestId !== state.currentRequestId) return;
+
+  state.isAnimating = false;
+
+  if (fetchError) {
+    // Stop cleanly and show error on connect panel; do not reveal fake grid
+    showConnectPanel();
+    showConnectError(`✗ ${fetchError}`);
+    return;
+  }
+
+  // Success: reveal authentic contribution graph and session
+  state.sessionId = data.session_id;
+  state.username  = data.username;
+
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: 'register_session', session_id: state.sessionId }));
+  }
+
+  populateSessionPanel(data);
+
+  // If user has zero contributions, display notice
+  const totalContribs = data.stats ? data.stats.total_contributions : 0;
+  if (totalContribs === 0) {
+    setMusicState('IDLE', '⚠ No contributions found for this user in the past year');
+  } else {
+    setMusicState('IDLE', 'Ready to play on ESP32 speaker');
+  }
+
+  if (dom.musicToggleBtn) dom.musicToggleBtn.disabled = false;
 }
 
 // ── Disconnect flow ────────────────────────────────────────────────────────
@@ -392,6 +442,8 @@ function showConnectPanel() {
 }
 
 function clearSessionState() {
+  state.currentRequestId++;
+  state.isAnimating = false;
   stopSynchronizedPlayback();
   state.sessionId = null;
   state.username  = null;
@@ -445,9 +497,30 @@ function setDotClass(dot, cls) {
 
 // ── Contribution Grid Rendering ──────────────────────────────────────────
 
+function renderPlaceholderGrid() {
+  if (!dom.contribGrid) return;
+  dom.contribGrid.innerHTML = '';
+  dom.contribGrid.className = 'contrib-grid loading';
+
+  for (let col = 0; col < 52; col++) {
+    const colMod = col % 3;
+    for (let row = 0; row < 7; row++) {
+      const cell = document.createElement('div');
+      cell.className = 'contrib-cell day-cell';
+      const cellIndex = col * 7 + row;
+      cell.style.setProperty('--cell-index', cellIndex);
+      cell.dataset.week = col;
+      cell.dataset.day = row;
+      cell.dataset.weekMod = colMod;
+      dom.contribGrid.appendChild(cell);
+    }
+  }
+}
+
 function renderContributionGrid(levels) {
   if (!dom.contribGrid) return;
   dom.contribGrid.innerHTML = '';
+  dom.contribGrid.className = 'contrib-grid';
 
   // 52 weeks (cols), 7 days (rows)
   for (let col = 0; col < 52; col++) {
@@ -483,7 +556,17 @@ function setMusicState(newState, statusText = '') {
 
   if (!dom.musicToggleBtn) return;
 
-  if (newState === 'PLAYING') {
+  if (newState === 'REVEALING') {
+    dom.musicToggleBtn.disabled = true;
+    dom.musicToggleBtn.classList.remove('is-playing');
+    dom.musicBtnSpinner.classList.add('hidden');
+    dom.musicBtnIcon.innerHTML = `
+      <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+    `;
+    dom.musicBtnText.textContent = 'Play';
+  } else if (newState === 'PLAYING') {
     dom.musicToggleBtn.disabled = false;
     dom.musicToggleBtn.classList.add('is-playing');
     dom.musicBtnSpinner.classList.add('hidden');
@@ -495,7 +578,7 @@ function setMusicState(newState, statusText = '') {
     dom.musicBtnText.textContent = 'Stop';
   } else {
     // IDLE / STOPPED / READY
-    dom.musicToggleBtn.disabled = false;
+    dom.musicToggleBtn.disabled = state.isAnimating;
     dom.musicToggleBtn.classList.remove('is-playing');
     dom.musicBtnSpinner.classList.add('hidden');
     dom.musicBtnIcon.innerHTML = `
@@ -510,6 +593,8 @@ function setMusicState(newState, statusText = '') {
 // ── Music Button Click Handler (Instant Play <-> Stop Toggle) ────────────
 
 function handleMusicToggle() {
+  if (state.isAnimating) return; // Locked during reveal animation
+
   if (state.deviceStatus === 'DISCONNECTED') {
     if (dom.musicStatusText) {
       dom.musicStatusText.textContent = 'ESP32 device is not connected';
