@@ -69,7 +69,7 @@ using namespace websockets;
 #define WS_SERVER_URL       "ws://10.63.92.168:8000/ws/device"
 #define DEVICE_ID           "gitmusic-01"
 #define RECONNECT_DELAY_MS  5000
-#define PING_INTERVAL_MS    20000
+#define PING_INTERVAL_MS    10000
 
 // Compatibility macro for ArduinoJson v6 vs v7
 #if ARDUINOJSON_VERSION_MAJOR >= 7
@@ -136,17 +136,22 @@ const int gridY            = 12;  // Centered vertically in available area (Y: 1
 
 // ==========================================================================
 // AUDIO - Pentatonic scale (from niyamax/gitmusic useAudioEngine.js)
-// Contribution level 0=silence, 1=C4, 2=D4, 3=E4, 4=G4
+// 2.5-octave scale spanning C4 to D6 for dynamic streak-based pitch ascension
 // ==========================================================================
 
 static const float PENTATONIC_NOTES[] = {
-  261.63f,  // C4 -- level 1
-  293.66f,  // D4 -- level 2
-  329.63f,  // E4 -- level 3
-  392.00f,  // G4 -- level 4
-  440.00f,  // A4 -- streak bonus
-  523.25f,  // C5 -- today highlight
-  587.33f,  // D5 -- longest streak
+  261.63f,  // 0: C4
+  293.66f,  // 1: D4
+  329.63f,  // 2: E4
+  392.00f,  // 3: G4
+  440.00f,  // 4: A4
+  523.25f,  // 5: C5
+  587.33f,  // 6: D5
+  659.25f,  // 7: E5
+  783.99f,  // 8: G5
+  880.00f,  // 9: A5
+  1046.50f, // 10: C6
+  1174.66f, // 11: D6
 };
 
 #define NOTE_DURATION_MS  35
@@ -208,8 +213,9 @@ enum DisplayMode { MODE_IDLE, MODE_SWEEP, MODE_STATS, MODE_SESSION_END };
 DisplayMode displayMode = MODE_IDLE;
 
 // Sweep animation state
-int           sweepCol     = 0;
-unsigned long sweepLastMs  = 0;
+int           sweepCol           = 0;
+int           sweepRunningStreak = 0;
+unsigned long sweepLastMs        = 0;
 #define SWEEP_COL_DELAY_MS  45  // ms between column reveals
 
 // Idle animation state
@@ -239,7 +245,7 @@ void clearDisplay();
 void clearUsernameBanner();
 void drawUsername(const char* name, bool resetScroll);
 void drawStreakGraph(bool fullReveal);
-void drawStreakCell(int weekCol, int dayRow, uint8_t level, bool flash);
+void drawStreakCell(int weekCol, int dayRow, uint8_t level, bool flash, float streakIntensity = 0.0f);
 void startSweepAnimation();
 void tickSweepAnimation();
 void celebrateStreakReveal();
@@ -248,12 +254,18 @@ void tickIdleAnimation();
 void tickScrollText();
 void fadeOutDisplay();
 
-void playNote(float freq, int durationMs);
+void playNote(float freq, int durationMs, float intensity = 1.0f);
 void playStreakChime(int streak);
 void playSessionEndTone();
 void playIdlePulse();
 
+void startMusicSequencer();
+void stopMusicSequencer();
+void tickMusicSequencer();
+void prepareMusicStep(int step);
+
 float levelToFreq(uint8_t level);
+float streakToFreq(uint8_t level, int currentStreak);
 uint16_t rgb888to565(RGB c);
 RGB  hsv2rgb(float h, float s, float v);
 int  getTextPixelWidth(const char* str);
@@ -313,6 +325,7 @@ void setup() {
 
 void loop() {
   wsClient.poll();
+  tickMusicSequencer();
 
   unsigned long now = millis();
 
@@ -331,7 +344,7 @@ void loop() {
     lastPing = now;
   }
 
-  if (!wsConnected && (now - lastReconnectAttempt >= RECONNECT_DELAY_MS)) {
+  if (!wsConnected && (WiFi.status() == WL_CONNECTED) && (now - lastReconnectAttempt >= RECONNECT_DELAY_MS)) {
     Serial.println("[WS] Attempting reconnect to backend...");
     lastReconnectAttempt = now;
     connectWebSocket();
@@ -367,6 +380,8 @@ void connectWifi() {
     drawText3x5(8, 13, "WIFI...", {0, 140, 220});
   }
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);        // CRITICAL: Disable WiFi modem sleep to prevent latency & disconnects
+  WiFi.setAutoReconnect(true); // Auto-reconnect if router drops connection
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED) {
@@ -483,6 +498,7 @@ void handleWebSocketEvent(WebsocketsEvent event, String data) {
       break;
     case WebsocketsEvent::ConnectionClosed:
       Serial.println("[WS] ✖ Disconnected from backend server.");
+      stopMusicSequencer();
       wsConnected = false;
       gmData.sessionActive = false;
       displayMode = MODE_IDLE;
@@ -516,11 +532,20 @@ void handleWebSocketMessage(WebsocketsMessage msg) {
 
   } else if (strcmp(type, "session_end") == 0) {
     Serial.println("[Session] Session ended by user/backend.");
+    stopMusicSequencer();
     playSessionEndTone();
     fadeOutDisplay();
     memset(&gmData, 0, sizeof(gmData));
     gmData.sessionActive = false;
     displayMode = MODE_IDLE;
+
+  } else if (strcmp(type, "play") == 0 || strcmp(type, "play_tone") == 0) {
+    Serial.println("[WS] ▶ PLAY command received from website!");
+    startMusicSequencer();
+
+  } else if (strcmp(type, "stop") == 0) {
+    Serial.println("[WS] ⏹ STOP command received from website!");
+    stopMusicSequencer();
 
   } else if (strcmp(type, "pong") == 0) {
     // Keepalive pong received
@@ -663,12 +688,19 @@ void initI2S() {
 // Adapted from niyamax/gitmusic's velocity-modulated note triggering.
 // ==========================================================================
 
-void playNote(float freq, int durationMs) {
+void playNote(float freq, int durationMs, float intensity) {
   if (freq <= 0.0f || durationMs <= 0) return;
 
-  const int   totalSamples = (SAMPLE_RATE * durationMs) / 1000;
-  const float amplitude    = 10000.0f * max(0.2f, gmData.musicIntensity);
-  const float twoPiF       = 2.0f * PI * freq;
+  const int totalSamples = (SAMPLE_RATE * durationMs) / 1000;
+  const float twoPiF  = 2.0f * PI * freq;
+  const float twoPiF2 = 2.0f * twoPiF; // 2nd harmonic (octave)
+  const float twoPiF3 = 3.0f * twoPiF; // 3rd harmonic (octave + fifth)
+
+  // Clamp intensity 0.0 to 1.0
+  float clampedInt = (intensity < 0.2f) ? 0.2f : ((intensity > 1.0f) ? 1.0f : intensity);
+
+  // Maximum 16-bit digital amplitude for MAX98357A I2S amplifier
+  const float maxAmp = 32000.0f;
 
   const int CHUNK = 128;
   int16_t   buf[CHUNK];
@@ -680,44 +712,209 @@ void playNote(float freq, int durationMs) {
     for (int i = 0; i < chunk; i++) {
       float t    = (float)(written + i) / (float)SAMPLE_RATE;
       float frac = (float)(written + i) / (float)totalSamples;
-      float env  = 1.0f;
-      if (frac < 0.10f) env = frac / 0.10f;         // attack
-      if (frac > 0.80f) env = (1.0f - frac) / 0.20f; // release
-      buf[i] = (int16_t)(amplitude * env * sinf(twoPiF * t));
+      
+      // Punchy ADSR envelope with snappy attack and smooth release
+      float env = 1.0f;
+      if (frac < 0.08f) env = frac / 0.08f;
+      else if (frac > 0.70f) env = (1.0f - frac) / 0.30f;
+
+      // Rich harmonic synthesis (FMSine / PolySynth inspired):
+      // Fundamental + 2nd harmonic (octave warmth) + 3rd harmonic (sparkle & bite)
+      // Harmonics brighten as streak intensity increases!
+      float s1 = sinf(twoPiF * t);
+      float s2 = sinf(twoPiF2 * t);
+      float s3 = sinf(twoPiF3 * t);
+
+      float h2 = 0.20f + 0.12f * clampedInt;
+      float h3 = 0.06f + 0.10f * clampedInt;
+      float raw = 0.68f * s1 + h2 * s2 + h3 * s3;
+
+      buf[i] = (int16_t)(maxAmp * env * raw);
     }
     i2s_write(I2S_PORT, buf, chunk * sizeof(int16_t), &bytesOut, portMAX_DELAY);
     written += chunk;
   }
 }
 
-// Level 0=silence, 1=C4, 2=D4, 3=E4, 4=G4
-float levelToFreq(uint8_t level) {
+// Pitch ascends across 2.5 octaves as streak builds up!
+float streakToFreq(uint8_t level, int currentStreak) {
   if (level == 0) return 0.0f;
-  int idx = (int)level - 1;
-  if (idx > 3) idx = 3;
-  return PENTATONIC_NOTES[idx];
+  int baseNote = (int)level - 1; // 0..3 (C4, D4, E4, G4)
+  // Every 2 streak days/weeks shifts note up the pentatonic scale
+  int streakBonus = min(currentStreak / 2, 7);
+  int noteIndex = min(baseNote + streakBonus, 11);
+  return PENTATONIC_NOTES[noteIndex];
 }
 
-// Ascending arpeggio chime on session start (like niyamax chord trigger)
+float levelToFreq(uint8_t level) {
+  return streakToFreq(level, 0);
+}
+
+// ==========================================================================
+// NON-BLOCKING MUSIC SEQUENCER (I2S Tone Generator)
+//
+// Generated locally from GitHub contribution levels on the ESP32:
+// - Deterministic mapping: same contributions always produce the exact same melody.
+// - Level 0: Rest / Silence.
+// - Levels 1-4: Deterministic pentatonic scale notes ascending with level & streak.
+// - Completely non-blocking: I2S writes use 0 timeout so loop() and wsClient.poll()
+//   run continuously, allowing immediate processing of STOP commands.
+// - Loops seamlessly from week 51 back to week 0.
+// - Pressing STOP instantly silences the speaker and resets playback position.
+// ==========================================================================
+
+struct MusicSequencerState {
+  bool          playing          = false;
+  int           currentStep      = 0;          // Column index: 0 .. 51 (52 weeks)
+  const int     totalSteps       = GRAPH_COLS; // 52 weeks
+  unsigned long stepStartMs      = 0;
+  const int     stepDurationMs   = 120;        // 120ms per note
+  int           currentLevel     = 0;          // 0..4
+  float         currentFreq      = 0.0f;       // Tone frequency (0.0 = silence/rest)
+  float         currentIntensity = 0.5f;
+  int           runningStreak    = 0;          // Deterministic streak accumulator
+  uint32_t      sampleCount      = 0;          // Continuous sample counter
+} musicSeq;
+
+void prepareMusicStep(int step) {
+  if (step < 0 || step >= GRAPH_COLS) return;
+
+  uint8_t maxLvl = 0;
+  for (int d = 0; d < GRAPH_ROWS; d++) {
+    if (gmData.levels[step][d] > maxLvl) {
+      maxLvl = gmData.levels[step][d];
+    }
+  }
+
+  musicSeq.currentLevel = maxLvl;
+
+  if (maxLvl == 0) {
+    // Level 0: Rest / Silence
+    musicSeq.currentFreq      = 0.0f;
+    musicSeq.currentIntensity = 0.0f;
+    musicSeq.runningStreak    = 0;
+  } else {
+    // Levels 1..4: Higher contribution levels produce higher notes
+    musicSeq.runningStreak++;
+    musicSeq.currentIntensity = min(1.0f, 0.25f + (float)musicSeq.runningStreak * 0.12f);
+    musicSeq.currentFreq      = streakToFreq(maxLvl, musicSeq.runningStreak);
+  }
+}
+
+void startMusicSequencer() {
+  musicSeq.currentStep   = 0;
+  musicSeq.runningStreak = 0;
+  musicSeq.sampleCount   = 0;
+  musicSeq.stepStartMs   = millis();
+  prepareMusicStep(0);
+  musicSeq.playing       = true;
+  Serial.printf("[Music] ▶ PLAY: local melody generator started (total steps: %d)\n", musicSeq.totalSteps);
+}
+
+void stopMusicSequencer() {
+  musicSeq.playing     = false;
+  musicSeq.currentStep = 0;
+  musicSeq.currentFreq = 0.0f;
+  musicSeq.sampleCount = 0;
+
+  // Immediately silence speaker output
+  i2s_zero_dma_buffer(I2S_PORT);
+  int16_t zeroBuf[64] = {0};
+  size_t bytesOut = 0;
+  i2s_write(I2S_PORT, zeroBuf, sizeof(zeroBuf), &bytesOut, 0);
+
+  Serial.println("[Music] ⏹ STOP: silenced speaker, position reset to beginning");
+}
+
+void tickMusicSequencer() {
+  if (!musicSeq.playing) return;
+
+  unsigned long now = millis();
+
+  // Advance step when duration expires
+  if (now - musicSeq.stepStartMs >= (unsigned long)musicSeq.stepDurationMs) {
+    musicSeq.currentStep++;
+    if (musicSeq.currentStep >= musicSeq.totalSteps) {
+      // Reached the end of the melody -> loop back to beginning!
+      musicSeq.currentStep   = 0;
+      musicSeq.runningStreak = 0;
+      Serial.println("[Music] Loop: melody looped back to beginning");
+    }
+    musicSeq.stepStartMs = now;
+    prepareMusicStep(musicSeq.currentStep);
+  }
+
+  // Non-blocking I2S chunk generation and transmission
+  const int CHUNK = 64; // 64 samples at 16kHz = 4ms of audio
+  int16_t chunkBuf[CHUNK];
+  size_t bytesWritten = 0;
+
+  for (int attempt = 0; attempt < 2; attempt++) {
+    unsigned long elapsed = now - musicSeq.stepStartMs;
+    // Articulation: 80% sounding, 20% release/gap
+    unsigned long activeDuration = ((unsigned long)musicSeq.stepDurationMs * 80) / 100;
+    bool isSounding = (musicSeq.currentFreq > 0.0f) && (elapsed < activeDuration);
+
+    if (!isSounding) {
+      memset(chunkBuf, 0, sizeof(chunkBuf));
+    } else {
+      float twoPiF  = 2.0f * PI * musicSeq.currentFreq;
+      float twoPiF2 = 2.0f * twoPiF;
+      float twoPiF3 = 3.0f * twoPiF;
+      const float maxAmp = 32000.0f;
+      float intensity = musicSeq.currentIntensity;
+
+      float frac = (float)elapsed / (float)activeDuration;
+      float env = 1.0f;
+      if (frac < 0.10f) env = frac / 0.10f;
+      else if (frac > 0.75f) env = (1.0f - frac) / 0.25f;
+
+      for (int i = 0; i < CHUNK; i++) {
+        float t = (float)(musicSeq.sampleCount + i) / (float)SAMPLE_RATE;
+        float s1 = sinf(twoPiF * t);
+        float s2 = sinf(twoPiF2 * t);
+        float s3 = sinf(twoPiF3 * t);
+
+        float h2 = 0.20f + 0.12f * intensity;
+        float h3 = 0.06f + 0.10f * intensity;
+        float raw = 0.68f * s1 + h2 * s2 + h3 * s3;
+
+        chunkBuf[i] = (int16_t)(maxAmp * env * raw);
+      }
+    }
+
+    // Completely non-blocking: timeout = 0 ticks
+    esp_err_t err = i2s_write(I2S_PORT, chunkBuf, sizeof(chunkBuf), &bytesWritten, 0);
+    if (bytesWritten == sizeof(chunkBuf)) {
+      musicSeq.sampleCount += CHUNK;
+    } else {
+      break; // DMA buffer full, return to loop immediately
+    }
+  }
+}
+
+// Ascending arpeggio chime on session start, scaling intensity & octave with streak
 void playStreakChime(int streak) {
-  int notes = 3 + min(streak / 7, 4);
+  int notes = 3 + min(streak / 5, 5);
   for (int i = 0; i < notes; i++) {
-    playNote(PENTATONIC_NOTES[i % 7], 160);
-    delay(85);
+    float intensity = min(1.0f, 0.4f + (float)i * 0.15f);
+    int noteIdx = min(i * 2, 11);
+    playNote(PENTATONIC_NOTES[noteIdx], 140, intensity);
+    delay(55);
   }
 }
 
 // Descending farewell when session ends
 void playSessionEndTone() {
   for (int i = 3; i >= 0; i--) {
-    playNote(PENTATONIC_NOTES[i], 180);
+    playNote(PENTATONIC_NOTES[i], 180, 0.7f);
     delay(100);
   }
 }
 
 // Soft ambient pulse in idle mode
 void playIdlePulse() {
-  playNote(PENTATONIC_NOTES[0] * 0.5f, 120);
+  playNote(PENTATONIC_NOTES[0] * 0.5f, 120, 0.3f);
 }
 
 // ==========================================================================
@@ -905,7 +1102,7 @@ void tickScrollText() {
 // Exactly 1 LED per cell. No transposing, no rotation, no stretching.
 // ==========================================================================
 
-void drawStreakCell(int weekCol, int dayRow, uint8_t level, bool flash) {
+void drawStreakCell(int weekCol, int dayRow, uint8_t level, bool flash, float streakIntensity) {
   int x = gridX + weekCol;
   int y = gridY + dayRow;
 
@@ -913,8 +1110,19 @@ void drawStreakCell(int weekCol, int dayRow, uint8_t level, bool flash) {
 
   RGB color;
   if (flash) {
-    // Bright cyan-green flash for active-column highlight (sequencer sweep effect)
-    color = (level == 0) ? RGB{ 15, 15, 25 } : RGB{ 120, 255, 200 };
+    if (level == 0) {
+      color = RGB{ 15, 20, 25 }; // Soft dim baseline when no commits in column
+    } else {
+      // Dynamic visual intensity pointing out streak:
+      // Low streak (si ~ 0): Electric emerald green { 60, 230, 110 }
+      // Mid streak (si ~ 0.5): Luminous bright cyan { 90, 255, 210 }
+      // High streak (si ~ 1.0): Radiant brilliant diamond gold-white { 255, 255, 220 }
+      float si = (streakIntensity < 0.0f) ? 0.0f : ((streakIntensity > 1.0f) ? 1.0f : streakIntensity);
+      uint8_t r = (uint8_t)(60 + 195 * si);
+      uint8_t g = 255;
+      uint8_t b = (uint8_t)(110 + 110 * si);
+      color = RGB{ r, g, b };
+    }
   } else {
     color = LEVEL_COLORS[min((int)level, 4)];
   }
@@ -957,13 +1165,6 @@ void tickIdleAnimation() {
   }
   // Dim "GITMUSIC" overlay in center
   drawText3x5(4, 13, "GITMUSIC", {70, 70, 70});
-
-  // Ambient idle audio pulse every ~15s
-  static unsigned long lastIdleSound = 0;
-  if (now - lastIdleSound > 15000) {
-    lastIdleSound = now;
-    playIdlePulse();
-  }
 }
 
 // ==========================================================================
@@ -994,31 +1195,34 @@ void celebrateStreakReveal() {
         if (gmData.levels[w][d] > 0) {
           int x = gridX + w;
           int y = gridY + d;
-          dma_display->drawPixelRGB888(x, y, 240, 240, 180); // Gold-white sparkle
+          dma_display->drawPixelRGB888(x, y, 255, 255, 220); // Radiant gold-white sparkle
         }
       }
     }
-    delay(60);
+    delay(50);
     for (int w = startCol; w < 52; w++) {
       for (int d = 0; d < GRAPH_ROWS; d++) {
         drawStreakCell(w, d, gmData.levels[w][d], false);
       }
     }
-    delay(40);
+    delay(35);
   }
 
-  // Celebratory ascending fanfare chime (A4 -> C5 -> D5)
-  playNote(PENTATONIC_NOTES[4], 90);
+  // Grand ascending celebratory streak chord progression (maximum sound)
+  playNote(PENTATONIC_NOTES[5], 90, 1.0f);   // C5
   delay(30);
-  playNote(PENTATONIC_NOTES[5], 110);
+  playNote(PENTATONIC_NOTES[7], 110, 1.0f);  // E5
   delay(30);
-  playNote(PENTATONIC_NOTES[6], 180);
+  playNote(PENTATONIC_NOTES[9], 180, 1.0f);  // A5
+  delay(30);
+  playNote(PENTATONIC_NOTES[10], 250, 1.0f); // C6 peak!
 }
 
 void startSweepAnimation() {
-  sweepCol    = 0;
-  sweepLastMs = 0;
-  displayMode = MODE_SWEEP;
+  sweepCol           = 0;
+  sweepRunningStreak = 0;
+  sweepLastMs        = 0;
+  displayMode        = MODE_SWEEP;
 
   int textW = getTextPixelWidth(gmData.username);
   scroll.active = (textW > PANEL_WIDTH);
@@ -1034,7 +1238,7 @@ void startSweepAnimation() {
     }
   }
 
-  Serial.println("[Sweep] Starting column-reveal sequencer...");
+  Serial.println("[Sweep] Starting column-reveal sequencer with streak modulation...");
   playStreakChime(gmData.currentStreak);
 }
 
@@ -1061,20 +1265,32 @@ void tickSweepAnimation() {
     }
   }
 
-  // Flash current column (bright highlight during active sweep)
-  for (int d = 0; d < GRAPH_ROWS; d++) {
-    drawStreakCell(sweepCol, d, gmData.levels[sweepCol][d], true);
-  }
-
-  // Find max level in this column and play note
+  // Find max level in current column & compute running streak
   uint8_t maxLvl = 0;
   for (int d = 0; d < GRAPH_ROWS; d++) {
     if (gmData.levels[sweepCol][d] > maxLvl) maxLvl = gmData.levels[sweepCol][d];
   }
 
-  float freq = levelToFreq(maxLvl);
-  if (freq > 0.0f) {
-    playNote(freq, NOTE_DURATION_MS);
+  if (maxLvl > 0) {
+    sweepRunningStreak++;
+  } else {
+    sweepRunningStreak = 0; // Streak drops
+  }
+
+  // Dynamic streak intensity: increases with streak, drops when streak breaks
+  float streakIntensity = (sweepRunningStreak > 0) ? min(1.0f, 0.25f + (float)sweepRunningStreak * 0.12f) : 0.0f;
+
+  // Flash current column: brightness & color point out streak intensity!
+  for (int d = 0; d < GRAPH_ROWS; d++) {
+    drawStreakCell(sweepCol, d, gmData.levels[sweepCol][d], true, streakIntensity);
+  }
+
+  // Sound playing based on streak at MAXIMUM volume:
+  // Pitch ascends through scale degrees as streak builds up, drops when streak ends
+  if (maxLvl > 0) {
+    float freq = streakToFreq(maxLvl, sweepRunningStreak);
+    int duration = NOTE_DURATION_MS + min(sweepRunningStreak * 4, 35);
+    playNote(freq, duration, streakIntensity);
   }
 
   sweepCol++;
@@ -1111,23 +1327,6 @@ void tickStatsAnimation() {
     int x = gridX + 51;
     int y = gridY + todayRow;
     dma_display->drawPixelRGB888(x, y, r, g, b);
-  }
-
-  // 2. Subtle shimmer wave across active streak columns every 5 seconds
-  if (statsPulseStep == 0 && gmData.currentStreak > 0) {
-    int streakWeeks = (gmData.currentStreak + 6) / 7;
-    int startCol = max(0, 52 - min(streakWeeks, 16));
-    for (int w = startCol; w < 52; w++) {
-      for (int d = 0; d < GRAPH_ROWS; d++) {
-        if (gmData.levels[w][d] > 1) {
-          drawStreakCell(w, d, gmData.levels[w][d], true);
-        }
-      }
-      delay(20);
-      for (int d = 0; d < GRAPH_ROWS; d++) {
-        drawStreakCell(w, d, gmData.levels[w][d], false);
-      }
-    }
   }
 }
 

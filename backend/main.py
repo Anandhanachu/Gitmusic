@@ -222,6 +222,24 @@ async def disconnect(body: DisconnectRequest):
     return DisconnectResponse(success=True, message="Disconnected successfully.")
 
 
+@app.post("/api/play", tags=["Music"])
+async def play_music():
+    """Forward PLAY command to the ESP32."""
+    if not device_manager.device_connected:
+        return {"success": False, "message": "ESP32 not connected"}
+    ok = await device_manager._send_to_device({"type": "play"})
+    return {"success": ok}
+
+
+@app.post("/api/stop", tags=["Music"])
+async def stop_music():
+    """Forward STOP command to the ESP32."""
+    if not device_manager.device_connected:
+        return {"success": False, "message": "ESP32 not connected"}
+    ok = await device_manager._send_to_device({"type": "stop"})
+    return {"success": ok}
+
+
 # ---------------------------------------------------------------------------
 # WebSocket: ESP32 device
 # ---------------------------------------------------------------------------
@@ -353,6 +371,14 @@ async def ws_client(ws: WebSocket):
                     session = device_manager.current_session
                     if session and session.session_id == session_id:
                         session.attach_websocket(ws)
+
+            elif msg_type == "play":
+                logger.info("Website client sent 'play' -> forwarding to ESP32")
+                await device_manager._send_to_device({"type": "play"})
+
+            elif msg_type == "stop":
+                logger.info("Website client sent 'stop' -> forwarding to ESP32")
+                await device_manager._send_to_device({"type": "stop"})
 
             else:
                 logger.debug("Unhandled client ws message: '%s'", msg_type)

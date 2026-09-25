@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configurable timeout (seconds). Override via SESSION_TIMEOUT_SECONDS env var.
 # ---------------------------------------------------------------------------
-DEFAULT_SESSION_TIMEOUT = 300  # 5 minutes
+DEFAULT_SESSION_TIMEOUT = 7200  # 2 hours
 
 
 def _get_timeout() -> int:
@@ -83,6 +83,16 @@ class DeviceManager:
         async with self._lock:
             self._device_ws = ws
             self._device_connected = True
+            # When ESP32 freshly boots or reconnects, release any dead orphaned session
+            if self._session is not None:
+                logger.info(
+                    "Device freshly reconnected: resetting previous session '%s' (user '%s')",
+                    self._session.session_id,
+                    self._session.username,
+                )
+                if self._session._timeout_task:
+                    self._session._timeout_task.cancel()
+                self._session = None
         logger.info("ESP32 device registered: %s", self.DEVICE_ID)
 
     async def unregister_device(self) -> None:
@@ -90,8 +100,11 @@ class DeviceManager:
         async with self._lock:
             self._device_ws = None
             self._device_connected = False
-            # If a session was active, cancel its timeout but keep the session
-            # so the website gets notified of the device drop.
+            # Clean up active session when physical device disconnects (e.g. during reflashing)
+            if self._session is not None:
+                if self._session._timeout_task:
+                    self._session._timeout_task.cancel()
+                self._session = None
         logger.warning("ESP32 device disconnected: %s", self.DEVICE_ID)
 
     # ------------------------------------------------------------------
@@ -313,6 +326,10 @@ class DeviceManager:
             },
         }
         return await self._send_to_device(message)
+
+    async def play_tone(self) -> bool:
+        """Send a play_tone command to the connected ESP32."""
+        return await self._send_to_device({"type": "play_tone"})
 
     # ------------------------------------------------------------------
     # Status helpers (read-only – no lock needed for simple reads)

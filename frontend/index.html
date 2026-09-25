@@ -82,6 +82,15 @@
           <span class="btn-loader" aria-hidden="true"></span>
         </button>
 
+        <div class="connect-actions">
+          <button id="preview-tone-btn" class="btn btn-outline" type="button" aria-label="Preview Tone Sound">
+            <svg class="play-icon-sm" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+            <span id="preview-btn-text">Preview Tone Sound</span>
+          </button>
+        </div>
+
         <p class="error-msg hidden" id="connect-error" role="alert" aria-live="assertive"></p>
       </div>
 
@@ -131,6 +140,25 @@
             <div class="stat-value" id="val-monthly">–</div>
             <div class="stat-label">This Month</div>
           </div>
+        </div>
+
+        <!-- ESP32 Music Playback Controls -->
+        <div class="music-controls">
+          <div class="music-btn-group">
+            <button id="play-btn" class="btn btn-music-play" type="button" aria-label="Play Music on ESP32">
+              <svg class="control-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8 5v14l11-7z"/>
+              </svg>
+              <span>PLAY</span>
+            </button>
+            <button id="stop-btn" class="btn btn-music-stop" type="button" aria-label="Stop Music on ESP32" disabled>
+              <svg class="control-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M6 6h12v12H6z"/>
+              </svg>
+              <span>STOP</span>
+            </button>
+          </div>
+          <p class="music-status" id="music-status" role="status" aria-live="polite">Ready to play melody</p>
         </div>
 
         <!-- ESP32 status -->

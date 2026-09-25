@@ -62,6 +62,10 @@ const dom = {
   valTotal:       $('val-total'),
   valWeekly:      $('val-weekly'),
   valMonthly:     $('val-monthly'),
+
+  playBtn:        $('play-btn'),
+  stopBtn:        $('stop-btn'),
+  musicStatus:    $('music-status'),
 };
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
@@ -295,6 +299,8 @@ function populateSessionPanel(data) {
   const stats = data.stats || {};
   const u = data.username;
 
+  state.currentStreak = stats.current_streak ?? 0;
+
   dom.ghAvatar.src = `https://github.com/${u}.png?size=56`;
   dom.ghAvatar.alt = `${u} GitHub avatar`;
   dom.ghUsernameLabel.textContent = u;
@@ -336,6 +342,9 @@ function showConnectPanel() {
 function clearSessionState() {
   state.sessionId = null;
   state.username  = null;
+  if (dom.playBtn) dom.playBtn.classList.remove('playing');
+  if (dom.stopBtn) dom.stopBtn.disabled = true;
+  if (dom.musicStatus) dom.musicStatus.textContent = 'Ready to play melody';
 }
 
 // ── Banner states ──────────────────────────────────────────────────────────
@@ -380,6 +389,36 @@ function setDotClass(dot, cls) {
   dot.className = dot.className.replace(/dot--\w+/g, '').trim() + ' ' + cls;
 }
 
+// ── ESP32 Hardware Music Controls (PLAY & STOP) ─────────────────────────
+
+function handlePlay() {
+  if (dom.playBtn && dom.playBtn.classList.contains('playing')) return;
+
+  // Send simple WebSocket command to ESP32: {"type":"play"}
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: 'play' }));
+  }
+  // REST fallback
+  fetch(`${BASE_URL}/api/play`, { method: 'POST' }).catch(() => {});
+
+  if (dom.playBtn) dom.playBtn.classList.add('playing');
+  if (dom.stopBtn) dom.stopBtn.disabled = false;
+  if (dom.musicStatus) dom.musicStatus.textContent = '▶ Playing melody locally on ESP32 speaker…';
+}
+
+function handleStop() {
+  // Send simple WebSocket command to ESP32: {"type":"stop"}
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: 'stop' }));
+  }
+  // REST fallback
+  fetch(`${BASE_URL}/api/stop`, { method: 'POST' }).catch(() => {});
+
+  if (dom.playBtn) dom.playBtn.classList.remove('playing');
+  if (dom.stopBtn) dom.stopBtn.disabled = true;
+  if (dom.musicStatus) dom.musicStatus.textContent = '⏹ Stopped (Press PLAY to restart from beginning)';
+}
+
 // ── Event listeners ────────────────────────────────────────────────────────
 
 dom.connectBtn.addEventListener('click', handleConnect);
@@ -393,6 +432,14 @@ dom.usernameInput.addEventListener('keydown', e => {
 });
 
 dom.disconnectBtn.addEventListener('click', handleDisconnect);
+
+if (dom.playBtn) {
+  dom.playBtn.addEventListener('click', handlePlay);
+}
+
+if (dom.stopBtn) {
+  dom.stopBtn.addEventListener('click', handleStop);
+}
 
 // ── Init ───────────────────────────────────────────────────────────────────
 
