@@ -195,11 +195,16 @@ async def connect(request: Request, body: ConnectRequest):
 
     logger.info("Session %s started for user '%s'", session.session_id, username)
 
+    audio_url = f"/api/music/{session.session_id}/audio.wav" if session.audio_path else None
+
     return ConnectResponse(
         success=True,
         session_id=session.session_id,
         username=username,
         stats=stats,
+        levels=session.levels,
+        timeline=session.timeline,
+        audio_url=audio_url,
     )
 
 
@@ -222,21 +227,68 @@ async def disconnect(body: DisconnectRequest):
     return DisconnectResponse(success=True, message="Disconnected successfully.")
 
 
+@app.get("/api/music/{session_id}/audio.wav", tags=["Music"])
+async def get_music_audio(session_id: str):
+    """Serve the 16-bit 44.1kHz mono PCM WAV for the active session."""
+    session = device_manager.current_session
+    cache_dir = os.path.join(os.path.dirname(__file__), "audio_cache")
+    wav_path = os.path.join(cache_dir, f"{session_id}.wav")
+    if not os.path.isfile(wav_path):
+        if session and session.session_id == session_id and session.audio_path and os.path.isfile(session.audio_path):
+            wav_path = session.audio_path
+        else:
+            raise HTTPException(status_code=404, detail="Audio file not found for this session.")
+
+    return FileResponse(
+        wav_path,
+        media_type="audio/wav",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
+@app.get("/api/music/{session_id}/timeline", tags=["Music"])
+async def get_music_timeline(session_id: str):
+    """Return the authoritative musical timeline for the session."""
+    session = device_manager.current_session
+    if not session or session.session_id != session_id or not session.timeline:
+        raise HTTPException(status_code=404, detail="Timeline not found for this session.")
+    return session.timeline
+
+
+@app.post("/api/music/prepare", tags=["Music"])
+async def prepare_music_endpoint(request: Request):
+    """Trigger ESP32 audio buffering and timeline preparation."""
+    host = request.headers.get("host", "localhost:8000")
+    proto = request.url.scheme
+    base_url = f"{proto}://{host}"
+    res = await device_manager.prepare_music(base_url)
+    return res
+
+
+@app.post("/api/music/play", tags=["Music"])
 @app.post("/api/play", tags=["Music"])
 async def play_music():
-    """Forward PLAY command to the ESP32."""
+    """Trigger synchronized playback on ESP32 and website."""
     if not device_manager.device_connected:
         return {"success": False, "message": "ESP32 not connected"}
-    ok = await device_manager._send_to_device({"type": "play"})
+    ok = await device_manager.start_music()
+    await ws_manager.broadcast({
+        "type": "music_start",
+    })
     return {"success": ok}
 
 
+@app.post("/api/music/stop", tags=["Music"])
 @app.post("/api/stop", tags=["Music"])
 async def stop_music():
-    """Forward STOP command to the ESP32."""
-    if not device_manager.device_connected:
-        return {"success": False, "message": "ESP32 not connected"}
-    ok = await device_manager._send_to_device({"type": "stop"})
+    """Stop synchronized playback on ESP32 and website."""
+    ok = await device_manager.stop_music()
+    await ws_manager.broadcast({
+        "type": "music_stop",
+    })
     return {"success": ok}
 
 
@@ -305,6 +357,20 @@ async def ws_device(ws: WebSocket):
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})
 
+            elif msg_type == "music_ready":
+                logger.info("ESP32 reported music_ready")
+                await device_manager.on_device_ready()
+                await ws_manager.broadcast({
+                    "type": "music_ready",
+                    "device_id": device_manager.DEVICE_ID,
+                })
+
+            elif msg_type == "music_loop":
+                logger.info("ESP32 reported music loop")
+                await ws_manager.broadcast({
+                    "type": "music_loop",
+                })
+
             else:
                 logger.debug("Unhandled device message type: '%s'", msg_type)
 
@@ -372,13 +438,21 @@ async def ws_client(ws: WebSocket):
                     if session and session.session_id == session_id:
                         session.attach_websocket(ws)
 
-            elif msg_type == "play":
-                logger.info("Website client sent 'play' -> forwarding to ESP32")
-                await device_manager._send_to_device({"type": "play"})
+            elif msg_type == "music_prepare":
+                base_url = data.get("base_url", "http://localhost:8000")
+                logger.info("Website requested music prepare, base_url: %s", base_url)
+                res = await device_manager.prepare_music(base_url)
+                await ws.send_json({"type": "music_preparing", "result": res})
 
-            elif msg_type == "stop":
-                logger.info("Website client sent 'stop' -> forwarding to ESP32")
-                await device_manager._send_to_device({"type": "stop"})
+            elif msg_type in ("play", "music_play"):
+                logger.info("Website client sent 'play' -> starting synchronized playback")
+                await device_manager.start_music()
+                await ws_manager.broadcast({"type": "music_start"})
+
+            elif msg_type in ("stop", "music_stop"):
+                logger.info("Website client sent 'stop' -> stopping synchronized playback")
+                await device_manager.stop_music()
+                await ws_manager.broadcast({"type": "music_stop"})
 
             else:
                 logger.debug("Unhandled client ws message: '%s'", msg_type)

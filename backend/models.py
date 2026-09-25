@@ -39,6 +39,9 @@ class ConnectResponse(BaseModel):
     error: Optional[str] = None
     message: Optional[str] = None
     stats: Optional[dict] = None
+    levels: Optional[list] = None
+    timeline: Optional[dict] = None
+    audio_url: Optional[str] = None
 
 
 class DisconnectRequest(BaseModel):

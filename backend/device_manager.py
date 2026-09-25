@@ -42,6 +42,11 @@ class Session:
         self.created_at: datetime = datetime.now(timezone.utc)
         self.client_ws: Optional[WebSocket] = None  # owning website WebSocket
         self._timeout_task: Optional[asyncio.Task] = None
+        self.stats: dict = {}
+        self.levels: list = []
+        self.timeline: Optional[dict] = None
+        self.audio_path: Optional[str] = None
+        self.music_state: str = "IDLE"  # IDLE, PREPARING, READY, PLAYING, STOPPING
 
     def attach_websocket(self, ws: WebSocket) -> None:
         self.client_ws = ws
@@ -325,7 +330,110 @@ class DeviceManager:
                 "intensity": intensity,
             },
         }
+
+        # Cache levels and pre-render piano composition in background
+        if self._session:
+            self._session.stats = stats
+            self._session.levels = levels
+            try:
+                from composer import compose_from_github
+                from piano_synth import render_composition_to_wav
+                timeline = compose_from_github(levels, stats.get("current_streak", 0))
+                self._session.timeline = timeline
+                cache_dir = os.path.join(os.path.dirname(__file__), "audio_cache")
+                wav_path = os.path.join(cache_dir, f"{self._session.session_id}.wav")
+                render_composition_to_wav(timeline, wav_path)
+                self._session.audio_path = wav_path
+                logger.info("Pre-rendered piano audio for session '%s' at %s", self._session.session_id, wav_path)
+            except Exception as exc:
+                logger.error("Error pre-rendering piano composition: %s", exc)
+
         return await self._send_to_device(message)
+
+    async def prepare_music(self, base_url: str) -> dict:
+        """
+        Initiates the music preparation handshake with ESP32.
+        Renders/loads audio & timeline, sends prepare_music command to ESP32.
+        """
+        if not self._device_connected or self._session is None:
+            return {"success": False, "error": "DEVICE_NOT_CONNECTED", "message": "ESP32 not connected"}
+
+        # Ensure timeline and audio exist
+        if not self._session.timeline or not self._session.audio_path or not os.path.exists(self._session.audio_path):
+            from composer import compose_from_github
+            from piano_synth import render_composition_to_wav
+            timeline = compose_from_github(self._session.levels, self._session.stats.get("current_streak", 0))
+            self._session.timeline = timeline
+            cache_dir = os.path.join(os.path.dirname(__file__), "audio_cache")
+            wav_path = os.path.join(cache_dir, f"{self._session.session_id}.wav")
+            render_composition_to_wav(timeline, wav_path)
+            self._session.audio_path = wav_path
+
+        self._session.music_state = "PREPARING"
+
+        # Format compact timeline for ESP32
+        esp_timeline = [
+            {
+                "time": ev["time"],
+                "week": ev["week"],
+                "day": ev["day"],
+                "velocity": ev["velocity"]
+            }
+            for ev in self._session.timeline.get("events", [])
+        ]
+
+        # For the ESP32 device on the local network, ensure base_url uses LAN IP if localhost
+        import socket
+        def _get_lan_ip():
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+                s.close()
+                return ip
+            except Exception:
+                return "10.63.92.168"
+
+        esp_base_url = base_url
+        if "localhost" in esp_base_url or "127.0.0.1" in esp_base_url:
+            lan_ip = _get_lan_ip()
+            esp_base_url = esp_base_url.replace("localhost", lan_ip).replace("127.0.0.1", lan_ip)
+
+        audio_url = f"{esp_base_url.rstrip('/')}/api/music/{self._session.session_id}/audio.wav"
+
+        message = {
+            "type": "prepare_music",
+            "audio_url": audio_url,
+            "duration_ms": self._session.timeline.get("duration_ms", 29538),
+            "timeline": esp_timeline
+        }
+
+        ok = await self._send_to_device(message)
+        return {
+            "success": ok,
+            "state": "PREPARING",
+            "duration_ms": self._session.timeline.get("duration_ms", 29538),
+            "timeline": self._session.timeline,
+            "audio_url": f"/api/music/{self._session.session_id}/audio.wav"
+        }
+
+    async def on_device_ready(self) -> None:
+        """Called when ESP32 reports that it has buffered audio and is READY."""
+        if self._session:
+            self._session.music_state = "READY"
+        logger.info("ESP32 reported music READY")
+
+    async def start_music(self) -> bool:
+        """Sends START command to ESP32."""
+        if self._session:
+            self._session.music_state = "PLAYING"
+        return await self._send_to_device({"type": "music_start"})
+
+    async def stop_music(self) -> bool:
+        """Sends STOP command to ESP32."""
+        if self._session:
+            self._session.music_state = "IDLE"
+        return await self._send_to_device({"type": "music_stop"})
 
     async def play_tone(self) -> bool:
         """Send a play_tone command to the connected ESP32."""

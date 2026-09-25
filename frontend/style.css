@@ -644,6 +644,257 @@ body {
   font-weight: 500;
 }
 
+/* ── Synchronized Piano Music & Contribution Timeline ──────── */
+.music-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+  transition: var(--transition);
+}
+
+.music-control-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+/* Compact Single Toggle Button (40-48px height) */
+.btn-music-toggle {
+  height: 44px;
+  min-width: 130px;
+  padding: 0 1.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(57, 211, 83, 0.4);
+  background: linear-gradient(180deg, rgba(57, 211, 83, 0.2) 0%, rgba(35, 134, 54, 0.25) 100%);
+  color: #39d353;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+}
+
+.btn-music-toggle:hover:not(:disabled) {
+  border-color: #39d353;
+  background: linear-gradient(180deg, rgba(57, 211, 83, 0.3) 0%, rgba(35, 134, 54, 0.35) 100%);
+  color: #56ff74;
+  box-shadow: 0 0 16px rgba(57, 211, 83, 0.3);
+  transform: translateY(-1px);
+}
+
+.btn-music-toggle:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.btn-music-toggle.is-playing {
+  border-color: rgba(248, 81, 73, 0.5);
+  background: linear-gradient(180deg, rgba(248, 81, 73, 0.2) 0%, rgba(180, 40, 40, 0.25) 100%);
+  color: #ff7b72;
+}
+
+.btn-music-toggle.is-playing:hover:not(:disabled) {
+  border-color: #ff7b72;
+  background: linear-gradient(180deg, rgba(248, 81, 73, 0.3) 0%, rgba(180, 40, 40, 0.35) 100%);
+  color: #ffa198;
+  box-shadow: 0 0 16px rgba(248, 81, 73, 0.3);
+}
+
+.btn-music-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.btn-music-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.music-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.music-status-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.music-state-badge {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.badge-idle {
+  background: rgba(139, 148, 158, 0.15);
+  color: var(--text-secondary);
+  border: 1px solid rgba(139, 148, 158, 0.3);
+}
+
+.badge-preparing {
+  background: rgba(210, 153, 34, 0.15);
+  color: #e3b341;
+  border: 1px solid rgba(210, 153, 34, 0.4);
+  animation: pulse-badge 1.5s ease-in-out infinite;
+}
+
+.badge-ready {
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(88, 166, 255, 0.4);
+}
+
+.badge-playing {
+  background: rgba(57, 211, 83, 0.15);
+  color: #39d353;
+  border: 1px solid rgba(57, 211, 83, 0.4);
+  animation: pulse-badge 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.music-status-text {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+/* ── Contribution Graph Visualization ──────────────────────── */
+.contrib-viz {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem;
+}
+
+.contrib-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.65rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.contrib-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.contrib-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-text {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin: 0 2px;
+}
+
+.legend-cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.contrib-grid-scroll {
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+}
+
+.contrib-grid {
+  display: grid;
+  grid-template-columns: repeat(52, 1fr);
+  grid-template-rows: repeat(7, 1fr);
+  grid-auto-flow: column;
+  gap: 3px;
+  min-width: 620px;
+  max-width: 100%;
+}
+
+.contrib-cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: #161b22;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  position: relative;
+}
+
+/* GitHub Level Colors */
+.lvl-0 { background-color: #161b22; }
+.lvl-1 { background-color: #0e4429; }
+.lvl-2 { background-color: #006d32; }
+.lvl-3 { background-color: #26a641; }
+.lvl-4 { background-color: #39d353; }
+
+/* Musical synchronised highlight */
+.contrib-cell.cell-highlight {
+  transform: scale(1.6);
+  z-index: 10;
+  box-shadow: 0 0 12px #ffffff, 0 0 20px #39d353;
+  background-color: #ffffff !important;
+  border-radius: 3px;
+}
+
+.contrib-cell.cell-trail {
+  transform: scale(1.15);
+  box-shadow: 0 0 6px #39d353;
+}
+
+/* Timeline scrubber bar */
+.timeline-bar-wrap {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.timeline-bar-progress {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #39d353, #58a6ff);
+  border-radius: 2px;
+  transition: width 0.08s linear;
+}
+
 /* ── Device info block ────────────────────────────────────── */
 .device-info {
   background: var(--bg-elevated);

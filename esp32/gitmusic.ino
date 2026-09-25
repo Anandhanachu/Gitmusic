@@ -47,6 +47,8 @@
  */
 
 #include <WiFi.h>
+#include <WiFiClient.h>
+#include <HTTPClient.h>
 #include <ArduinoWebsockets.h>
 #include <ArduinoJson.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
@@ -62,11 +64,11 @@ using namespace websockets;
 #define WIFI_SSID           "Fiber"
 #define WIFI_PASSWORD       "12345678"
 
-// Backend Host & Port (Your computer's current IP is 10.63.92.168)
-#define WS_SERVER_HOST      "10.63.92.168"
+// Backend Host & Port (Your computer's current IP is 172.20.10.10)
+#define WS_SERVER_HOST      "172.20.10.10"
 #define WS_SERVER_PORT      8000
 #define WS_SERVER_PATH      "/ws/device"
-#define WS_SERVER_URL       "ws://10.63.92.168:8000/ws/device"
+#define WS_SERVER_URL       "ws://172.20.10.10:8000/ws/device"
 #define DEVICE_ID           "gitmusic-01"
 #define RECONNECT_DELAY_MS  5000
 #define PING_INTERVAL_MS    10000
@@ -223,11 +225,46 @@ unsigned long idleLastMs = 0;
 int           idleHue    = 0;
 
 // ==========================================================================
+// SYNCHRONIZED PIANO & LED TIMELINE STATE
+// ==========================================================================
+
+enum MusicPlaybackState {
+  STATE_IDLE,
+  STATE_PREPARING,
+  STATE_READY,
+  STATE_PLAYING,
+  STATE_STOPPING
+};
+volatile MusicPlaybackState playbackState = STATE_IDLE;
+
+struct MusicalEvent {
+  uint32_t timeMs;
+  uint8_t  week;
+  uint8_t  day;
+  uint8_t  velocity;
+};
+
+#define MAX_TIMELINE_EVENTS 140
+MusicalEvent timelineEvents[MAX_TIMELINE_EVENTS];
+int timelineEventCount = 0;
+uint32_t compositionDurationMs = 29538;
+unsigned long playbackT0 = 0;
+int currentTimelineIdx = 0;
+int activeHighlightWeek = -1;
+int activeHighlightDay = -1;
+unsigned long activeHighlightEndMs = 0;
+String currentAudioUrl = "";
+TaskHandle_t audioTaskHandle = NULL;
+
+// ==========================================================================
 // FORWARD DECLARATIONS
 // ==========================================================================
 
 void connectWifi();
 void connectWebSocket();
+void audioPlayerTask(void *pvParameters);
+void tickLEDTimeline();
+void stopSynchronizedMusic();
 void handleWebSocketMessage(WebsocketsMessage msg);
 void handleWebSocketEvent(WebsocketsEvent event, String data);
 #if ARDUINOJSON_VERSION_MAJOR >= 7
@@ -314,6 +351,18 @@ void setup() {
   wsClient.onEvent(handleWebSocketEvent);
   connectWebSocket();
 
+  // [5/5] AUDIO STREAMING TASK (Core 0 background worker)
+  xTaskCreatePinnedToCore(
+    audioPlayerTask,
+    "AudioTask",
+    8192,
+    NULL,
+    5,
+    &audioTaskHandle,
+    0
+  );
+  Serial.println("[5/5] AUDIO TASK: Spawned background stream player on Core 0");
+
   Serial.println("======================================================");
   Serial.println("  STATUS: SYSTEM INITIALIZED & READY");
   Serial.println("======================================================");
@@ -325,7 +374,7 @@ void setup() {
 
 void loop() {
   wsClient.poll();
-  tickMusicSequencer();
+  tickLEDTimeline();
 
   unsigned long now = millis();
 
@@ -528,24 +577,90 @@ void handleWebSocketMessage(WebsocketsMessage msg) {
     Serial.printf("[Session] ✔ Received GitHub update for user: '%s'\n", doc["username"] | "");
     parseGitHubUpdate(doc);
     printStats();
-    startSweepAnimation();
+    displayMode = MODE_STATS;
+    clearDisplay();
+    drawUsername(gmData.username, true);
+    drawStreakGraph(true);
+    Serial.println("[Display] 52-week contribution graph and username loaded.");
 
   } else if (strcmp(type, "session_end") == 0) {
     Serial.println("[Session] Session ended by user/backend.");
-    stopMusicSequencer();
-    playSessionEndTone();
+    stopSynchronizedMusic();
     fadeOutDisplay();
     memset(&gmData, 0, sizeof(gmData));
     gmData.sessionActive = false;
     displayMode = MODE_IDLE;
 
-  } else if (strcmp(type, "play") == 0 || strcmp(type, "play_tone") == 0) {
-    Serial.println("[WS] ▶ PLAY command received from website!");
-    startMusicSequencer();
+  } else if (strcmp(type, "prepare_music") == 0) {
+    Serial.println("[Music] Received prepare_music command from backend");
+    playbackState = STATE_PREPARING;
 
-  } else if (strcmp(type, "stop") == 0) {
-    Serial.println("[WS] ⏹ STOP command received from website!");
-    stopMusicSequencer();
+    String audioUrl = doc["audio_url"] | "";
+    if (audioUrl.indexOf("localhost") >= 0) {
+      audioUrl.replace("localhost", WS_SERVER_HOST);
+    }
+    if (audioUrl.indexOf("127.0.0.1") >= 0) {
+      audioUrl.replace("127.0.0.1", WS_SERVER_HOST);
+    }
+    currentAudioUrl = audioUrl;
+    compositionDurationMs = doc["duration_ms"] | 29538;
+
+    timelineEventCount = 0;
+    if (doc.containsKey("timeline")) {
+      JsonArray arr = doc["timeline"].as<JsonArray>();
+      for (JsonObject ev : arr) {
+        if (timelineEventCount < MAX_TIMELINE_EVENTS) {
+          timelineEvents[timelineEventCount].timeMs   = ev["time"] | 0;
+          timelineEvents[timelineEventCount].week     = ev["week"] | 0;
+          timelineEvents[timelineEventCount].day      = ev["day"] | 0;
+          timelineEvents[timelineEventCount].velocity = ev["velocity"] | 70;
+          timelineEventCount++;
+        }
+      }
+    }
+    Serial.printf("[Music] Parsed %d timeline events (duration: %u ms)\n", timelineEventCount, compositionDurationMs);
+    Serial.printf("[Music] Audio stream URL: %s\n", currentAudioUrl.c_str());
+
+    // Verify audio stream connection via lightweight check
+    HTTPClient testHttp;
+    testHttp.begin(currentAudioUrl);
+    testHttp.setTimeout(3000);
+    int httpCode = testHttp.GET();
+    if (httpCode == HTTP_CODE_OK) {
+      Serial.println("[Music] Audio file accessible! Sending music_ready to backend...");
+      playbackState = STATE_READY;
+      testHttp.end();
+
+      ALLOC_JSON_DOC(resp, 64);
+      resp["type"] = "music_ready";
+      char respBuf[64];
+      serializeJson(resp, respBuf);
+      wsClient.send(respBuf);
+    } else {
+      Serial.printf("[Music] Audio check returned HTTP %d\n", httpCode);
+      testHttp.end();
+      // Even if check failed, set READY so playback attempt proceeds
+      playbackState = STATE_READY;
+      ALLOC_JSON_DOC(resp, 64);
+      resp["type"] = "music_ready";
+      char respBuf[64];
+      serializeJson(resp, respBuf);
+      wsClient.send(respBuf);
+    }
+
+  } else if (strcmp(type, "music_start") == 0 || strcmp(type, "play") == 0) {
+    Serial.println("[Music] ▶ START command received: launching synchronized audio and LED timeline!");
+    playbackT0 = millis();
+    currentTimelineIdx = 0;
+    activeHighlightWeek = -1;
+    activeHighlightDay = -1;
+    playbackState = STATE_PLAYING;
+    displayMode = MODE_STATS; // Display the authentic contribution grid
+    drawStreakGraph(true);
+
+  } else if (strcmp(type, "music_stop") == 0 || strcmp(type, "stop") == 0) {
+    Serial.println("[Music] ⏹ STOP command received: silencing audio & restoring idle LEDs");
+    stopSynchronizedMusic();
 
   } else if (strcmp(type, "pong") == 0) {
     // Keepalive pong received
@@ -662,7 +777,7 @@ void initI2S() {
   cfg.communication_format = I2S_FORMAT_DEFAULT;
   cfg.intr_alloc_flags     = ESP_INTR_FLAG_LEVEL1;
   cfg.dma_buf_count        = 8;
-  cfg.dma_buf_len          = 64;
+  cfg.dma_buf_len          = 256; // 256 samples @ 44.1kHz = 46.4ms buffer headroom
   cfg.use_apll             = false;
   cfg.tx_desc_auto_clear   = true;
 
@@ -682,58 +797,12 @@ void initI2S() {
 
 // ==========================================================================
 // AUDIO GENERATION
-//
-// Synthesizes a sine wave at the given frequency.
-// Includes basic ADSR envelope (attack 10%, release 20%).
-// Adapted from niyamax/gitmusic's velocity-modulated note triggering.
 // ==========================================================================
 
 void playNote(float freq, int durationMs, float intensity) {
-  if (freq <= 0.0f || durationMs <= 0) return;
-
-  const int totalSamples = (SAMPLE_RATE * durationMs) / 1000;
-  const float twoPiF  = 2.0f * PI * freq;
-  const float twoPiF2 = 2.0f * twoPiF; // 2nd harmonic (octave)
-  const float twoPiF3 = 3.0f * twoPiF; // 3rd harmonic (octave + fifth)
-
-  // Clamp intensity 0.0 to 1.0
-  float clampedInt = (intensity < 0.2f) ? 0.2f : ((intensity > 1.0f) ? 1.0f : intensity);
-
-  // Maximum 16-bit digital amplitude for MAX98357A I2S amplifier
-  const float maxAmp = 32000.0f;
-
-  const int CHUNK = 128;
-  int16_t   buf[CHUNK];
-  int       written = 0;
-  size_t    bytesOut;
-
-  while (written < totalSamples) {
-    int chunk = min(CHUNK, totalSamples - written);
-    for (int i = 0; i < chunk; i++) {
-      float t    = (float)(written + i) / (float)SAMPLE_RATE;
-      float frac = (float)(written + i) / (float)totalSamples;
-      
-      // Punchy ADSR envelope with snappy attack and smooth release
-      float env = 1.0f;
-      if (frac < 0.08f) env = frac / 0.08f;
-      else if (frac > 0.70f) env = (1.0f - frac) / 0.30f;
-
-      // Rich harmonic synthesis (FMSine / PolySynth inspired):
-      // Fundamental + 2nd harmonic (octave warmth) + 3rd harmonic (sparkle & bite)
-      // Harmonics brighten as streak intensity increases!
-      float s1 = sinf(twoPiF * t);
-      float s2 = sinf(twoPiF2 * t);
-      float s3 = sinf(twoPiF3 * t);
-
-      float h2 = 0.20f + 0.12f * clampedInt;
-      float h3 = 0.06f + 0.10f * clampedInt;
-      float raw = 0.68f * s1 + h2 * s2 + h3 * s3;
-
-      buf[i] = (int16_t)(maxAmp * env * raw);
-    }
-    i2s_write(I2S_PORT, buf, chunk * sizeof(int16_t), &bytesOut, portMAX_DELAY);
-    written += chunk;
-  }
+  // Deprecated: Audio is rendered on backend as realistic slow piano PCM WAV
+  // streamed via audioPlayerTask to I2S. Simple ESP32 tone generation is removed.
+  return;
 }
 
 // Pitch ascends across 2.5 octaves as streak builds up!
@@ -751,146 +820,176 @@ float levelToFreq(uint8_t level) {
 }
 
 // ==========================================================================
-// NON-BLOCKING MUSIC SEQUENCER (I2S Tone Generator)
+// SYNCHRONIZED PIANO AUDIO & LED TIMELINE ENGINE
 //
-// Generated locally from GitHub contribution levels on the ESP32:
-// - Deterministic mapping: same contributions always produce the exact same melody.
-// - Level 0: Rest / Silence.
-// - Levels 1-4: Deterministic pentatonic scale notes ascending with level & streak.
-// - Completely non-blocking: I2S writes use 0 timeout so loop() and wsClient.poll()
-//   run continuously, allowing immediate processing of STOP commands.
-// - Loops seamlessly from week 51 back to week 0.
-// - Pressing STOP instantly silences the speaker and resets playback position.
+// 1. Audio Task (Core 0):
+//    Streams 16-bit 44.1kHz mono PCM WAV from backend via HTTP chunking
+//    Feeds directly into MAX98357A via I2S DMA. Zero lag, non-blocking for matrix.
+//
+// 2. LED Timeline Engine (Core 1):
+//    Executes authoritative musical timeline events locally using millis().
+//    Highlights exact (week, day) cell matching the piano note with brilliant bloom.
+//    Wi-Fi jitter does not affect LED-to-audio sync because timeline is local!
+//
+// 3. Looping:
+//    Natural smooth loop when song reaches end, restarting audio and timeline without
+//    memory leaks or task duplication.
 // ==========================================================================
 
-struct MusicSequencerState {
-  bool          playing          = false;
-  int           currentStep      = 0;          // Column index: 0 .. 51 (52 weeks)
-  const int     totalSteps       = GRAPH_COLS; // 52 weeks
-  unsigned long stepStartMs      = 0;
-  const int     stepDurationMs   = 120;        // 120ms per note
-  int           currentLevel     = 0;          // 0..4
-  float         currentFreq      = 0.0f;       // Tone frequency (0.0 = silence/rest)
-  float         currentIntensity = 0.5f;
-  int           runningStreak    = 0;          // Deterministic streak accumulator
-  uint32_t      sampleCount      = 0;          // Continuous sample counter
-} musicSeq;
+void audioPlayerTask(void *pvParameters) {
+  uint8_t audioBuffer[1024];
+  HTTPClient httpClient;
 
-void prepareMusicStep(int step) {
-  if (step < 0 || step >= GRAPH_COLS) return;
+  while (true) {
+    if (playbackState == STATE_PLAYING && currentAudioUrl.length() > 0) {
+      Serial.printf("[AudioTask] Streaming realistic piano audio from: %s\n", currentAudioUrl.c_str());
+      httpClient.begin(currentAudioUrl);
+      httpClient.setTimeout(5000);
+      int code = httpClient.GET();
 
-  uint8_t maxLvl = 0;
-  for (int d = 0; d < GRAPH_ROWS; d++) {
-    if (gmData.levels[step][d] > maxLvl) {
-      maxLvl = gmData.levels[step][d];
+      if (code == HTTP_CODE_OK) {
+        int contentLength = httpClient.getSize();
+        int dataToRead = (contentLength > 44) ? (contentLength - 44) : contentLength;
+        int totalDataRead = 0;
+
+        WiFiClient *stream = httpClient.getStreamPtr();
+
+        // Skip 44-byte standard RIFF WAV header
+        uint8_t header[44];
+        int headerRead = 0;
+        unsigned long headerStart = millis();
+        while (headerRead < 44 && (millis() - headerStart < 2000) && stream->connected()) {
+          if (stream->available()) {
+            header[headerRead++] = stream->read();
+          } else {
+            vTaskDelay(pdMS_TO_TICKS(1));
+          }
+        }
+
+        Serial.printf("[AudioTask] ▶ Playing 16-bit 44.1kHz mono piano PCM stream (%d bytes)...\n", dataToRead);
+
+        while (playbackState == STATE_PLAYING) {
+          int avail = stream->available();
+          if (avail > 0) {
+            int toRead = min((int)sizeof(audioBuffer), avail);
+            if (dataToRead > 0) {
+              toRead = min(toRead, dataToRead - totalDataRead);
+            }
+            int bytesRead = stream->readBytes((char*)audioBuffer, toRead);
+            if (bytesRead > 0) {
+              totalDataRead += bytesRead;
+              size_t bytesWritten = 0;
+              i2s_write(I2S_PORT, audioBuffer, bytesRead, &bytesWritten, portMAX_DELAY);
+            }
+            if (dataToRead > 0 && totalDataRead >= dataToRead) {
+              Serial.println("[AudioTask] Finished playing full WAV audio file");
+              break;
+            }
+          } else {
+            if (!stream->connected()) {
+              break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(2));
+          }
+        }
+
+        i2s_zero_dma_buffer(I2S_PORT);
+      } else {
+        Serial.printf("[AudioTask] HTTP GET failed, code: %d\n", code);
+        vTaskDelay(pdMS_TO_TICKS(300));
+      }
+      httpClient.end();
+
+      // If still in PLAYING state, seamlessly loop playback
+      if (playbackState == STATE_PLAYING) {
+        playbackT0 = millis();
+        currentTimelineIdx = 0;
+      }
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(20));
     }
   }
-
-  musicSeq.currentLevel = maxLvl;
-
-  if (maxLvl == 0) {
-    // Level 0: Rest / Silence
-    musicSeq.currentFreq      = 0.0f;
-    musicSeq.currentIntensity = 0.0f;
-    musicSeq.runningStreak    = 0;
-  } else {
-    // Levels 1..4: Higher contribution levels produce higher notes
-    musicSeq.runningStreak++;
-    musicSeq.currentIntensity = min(1.0f, 0.25f + (float)musicSeq.runningStreak * 0.12f);
-    musicSeq.currentFreq      = streakToFreq(maxLvl, musicSeq.runningStreak);
-  }
 }
 
-void startMusicSequencer() {
-  musicSeq.currentStep   = 0;
-  musicSeq.runningStreak = 0;
-  musicSeq.sampleCount   = 0;
-  musicSeq.stepStartMs   = millis();
-  prepareMusicStep(0);
-  musicSeq.playing       = true;
-  Serial.printf("[Music] ▶ PLAY: local melody generator started (total steps: %d)\n", musicSeq.totalSteps);
-}
-
-void stopMusicSequencer() {
-  musicSeq.playing     = false;
-  musicSeq.currentStep = 0;
-  musicSeq.currentFreq = 0.0f;
-  musicSeq.sampleCount = 0;
-
-  // Immediately silence speaker output
-  i2s_zero_dma_buffer(I2S_PORT);
-  int16_t zeroBuf[64] = {0};
-  size_t bytesOut = 0;
-  i2s_write(I2S_PORT, zeroBuf, sizeof(zeroBuf), &bytesOut, 0);
-
-  Serial.println("[Music] ⏹ STOP: silenced speaker, position reset to beginning");
-}
-
-void tickMusicSequencer() {
-  if (!musicSeq.playing) return;
+void tickLEDTimeline() {
+  if (playbackState != STATE_PLAYING || timelineEventCount == 0) return;
 
   unsigned long now = millis();
+  unsigned long elapsedMs = now - playbackT0;
 
-  // Advance step when duration expires
-  if (now - musicSeq.stepStartMs >= (unsigned long)musicSeq.stepDurationMs) {
-    musicSeq.currentStep++;
-    if (musicSeq.currentStep >= musicSeq.totalSteps) {
-      // Reached the end of the melody -> loop back to beginning!
-      musicSeq.currentStep   = 0;
-      musicSeq.runningStreak = 0;
-      Serial.println("[Music] Loop: melody looped back to beginning");
+  // Natural smooth loop handling
+  if (elapsedMs >= compositionDurationMs) {
+    playbackT0 = now;
+    elapsedMs = 0;
+    currentTimelineIdx = 0;
+    if (activeHighlightWeek >= 0) {
+      drawStreakCell(activeHighlightWeek, activeHighlightDay, gmData.levels[activeHighlightWeek][activeHighlightDay], false);
+      activeHighlightWeek = -1;
     }
-    musicSeq.stepStartMs = now;
-    prepareMusicStep(musicSeq.currentStep);
+    Serial.println("[LED Timeline] Looping composition to beginning");
+
+    ALLOC_JSON_DOC(doc, 64);
+    doc["type"] = "music_loop";
+    char buf[64];
+    serializeJson(doc, buf);
+    wsClient.send(buf);
   }
 
-  // Non-blocking I2S chunk generation and transmission
-  const int CHUNK = 64; // 64 samples at 16kHz = 4ms of audio
-  int16_t chunkBuf[CHUNK];
-  size_t bytesWritten = 0;
-
-  for (int attempt = 0; attempt < 2; attempt++) {
-    unsigned long elapsed = now - musicSeq.stepStartMs;
-    // Articulation: 80% sounding, 20% release/gap
-    unsigned long activeDuration = ((unsigned long)musicSeq.stepDurationMs * 80) / 100;
-    bool isSounding = (musicSeq.currentFreq > 0.0f) && (elapsed < activeDuration);
-
-    if (!isSounding) {
-      memset(chunkBuf, 0, sizeof(chunkBuf));
-    } else {
-      float twoPiF  = 2.0f * PI * musicSeq.currentFreq;
-      float twoPiF2 = 2.0f * twoPiF;
-      float twoPiF3 = 3.0f * twoPiF;
-      const float maxAmp = 32000.0f;
-      float intensity = musicSeq.currentIntensity;
-
-      float frac = (float)elapsed / (float)activeDuration;
-      float env = 1.0f;
-      if (frac < 0.10f) env = frac / 0.10f;
-      else if (frac > 0.75f) env = (1.0f - frac) / 0.25f;
-
-      for (int i = 0; i < CHUNK; i++) {
-        float t = (float)(musicSeq.sampleCount + i) / (float)SAMPLE_RATE;
-        float s1 = sinf(twoPiF * t);
-        float s2 = sinf(twoPiF2 * t);
-        float s3 = sinf(twoPiF3 * t);
-
-        float h2 = 0.20f + 0.12f * intensity;
-        float h3 = 0.06f + 0.10f * intensity;
-        float raw = 0.68f * s1 + h2 * s2 + h3 * s3;
-
-        chunkBuf[i] = (int16_t)(maxAmp * env * raw);
-      }
-    }
-
-    // Completely non-blocking: timeout = 0 ticks
-    esp_err_t err = i2s_write(I2S_PORT, chunkBuf, sizeof(chunkBuf), &bytesWritten, 0);
-    if (bytesWritten == sizeof(chunkBuf)) {
-      musicSeq.sampleCount += CHUNK;
-    } else {
-      break; // DMA buffer full, return to loop immediately
-    }
+  // Fade active highlight back to authentic green level color
+  if (activeHighlightWeek >= 0 && now >= activeHighlightEndMs) {
+    drawStreakCell(activeHighlightWeek, activeHighlightDay, gmData.levels[activeHighlightWeek][activeHighlightDay], false);
+    activeHighlightWeek = -1;
   }
+
+  // Process timeline events matching current elapsed timestamp
+  while (currentTimelineIdx < timelineEventCount && elapsedMs >= timelineEvents[currentTimelineIdx].timeMs) {
+    MusicalEvent& ev = timelineEvents[currentTimelineIdx];
+
+    // Clear previous cell highlight
+    if (activeHighlightWeek >= 0) {
+      drawStreakCell(activeHighlightWeek, activeHighlightDay, gmData.levels[activeHighlightWeek][activeHighlightDay], false);
+    }
+
+    activeHighlightWeek = ev.week;
+    activeHighlightDay = ev.day;
+    activeHighlightEndMs = now + 450; // Visible bloom duration
+
+    int x = gridX + ev.week;
+    int y = gridY + ev.day;
+
+    // Draw radiant highlight on the matrix cell
+    if (ev.velocity > 85) {
+      dma_display->drawPixelRGB888(x, y, 255, 255, 255); // Brilliant white peak
+    } else {
+      dma_display->drawPixelRGB888(x, y, 160, 255, 230); // Radiant mint
+    }
+
+    currentTimelineIdx++;
+  }
+}
+
+void stopSynchronizedMusic() {
+  playbackState = STATE_IDLE;
+  i2s_zero_dma_buffer(I2S_PORT);
+
+  if (activeHighlightWeek >= 0) {
+    drawStreakCell(activeHighlightWeek, activeHighlightDay, gmData.levels[activeHighlightWeek][activeHighlightDay], false);
+    activeHighlightWeek = -1;
+  }
+
+  Serial.println("[Music] ⏹ Synchronized playback stopped and reset.");
+}
+
+// Retain legacy helpers for backwards compatibility
+void startMusicSequencer() {
+  playbackT0 = millis();
+  playbackState = STATE_PLAYING;
+}
+void stopMusicSequencer() {
+  stopSynchronizedMusic();
+}
+void tickMusicSequencer() {
+  tickLEDTimeline();
 }
 
 // Ascending arpeggio chime on session start, scaling intensity & octave with streak

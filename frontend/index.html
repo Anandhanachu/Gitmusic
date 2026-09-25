@@ -82,15 +82,6 @@
           <span class="btn-loader" aria-hidden="true"></span>
         </button>
 
-        <div class="connect-actions">
-          <button id="preview-tone-btn" class="btn btn-outline" type="button" aria-label="Preview Tone Sound">
-            <svg class="play-icon-sm" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M8 5v14l11-7z"/>
-            </svg>
-            <span id="preview-btn-text">Preview Tone Sound</span>
-          </button>
-        </div>
-
         <p class="error-msg hidden" id="connect-error" role="alert" aria-live="assertive"></p>
       </div>
 
@@ -142,23 +133,47 @@
           </div>
         </div>
 
-        <!-- ESP32 Music Playback Controls -->
-        <div class="music-controls">
-          <div class="music-btn-group">
-            <button id="play-btn" class="btn btn-music-play" type="button" aria-label="Play Music on ESP32">
-              <svg class="control-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M8 5v14l11-7z"/>
-              </svg>
-              <span>PLAY</span>
+        <!-- Synchronized Piano & Contribution Timeline -->
+        <div class="music-section">
+          <div class="music-control-bar">
+            <button id="music-toggle-btn" class="btn btn-music-toggle" type="button" aria-label="Play or Stop Music">
+              <span class="btn-music-icon" id="music-btn-icon">
+                <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+              </span>
+              <span id="music-btn-text">Play</span>
+              <span class="music-spinner hidden" id="music-btn-spinner" aria-hidden="true"></span>
             </button>
-            <button id="stop-btn" class="btn btn-music-stop" type="button" aria-label="Stop Music on ESP32" disabled>
-              <svg class="control-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M6 6h12v12H6z"/>
-              </svg>
-              <span>STOP</span>
-            </button>
+            <div class="music-status-wrap">
+              <span class="music-state-badge badge-idle" id="music-state-badge">IDLE</span>
+              <span class="music-status-text" id="music-status-text">Ready to play</span>
+            </div>
           </div>
-          <p class="music-status" id="music-status" role="status" aria-live="polite">Ready to play melody</p>
+
+          <!-- 52-week Contribution Graph Visualization (Synchronized with Piano & ESP32 LEDs) -->
+          <div class="contrib-viz" id="contrib-viz">
+            <div class="contrib-header">
+              <span class="contrib-title">Contribution Timeline</span>
+              <div class="contrib-legend">
+                <span class="legend-text">Less</span>
+                <span class="legend-cell lvl-0"></span>
+                <span class="legend-cell lvl-1"></span>
+                <span class="legend-cell lvl-2"></span>
+                <span class="legend-cell lvl-3"></span>
+                <span class="legend-cell lvl-4"></span>
+                <span class="legend-text">More</span>
+              </div>
+            </div>
+            <div class="contrib-grid-scroll">
+              <div class="contrib-grid" id="contrib-grid">
+                <!-- 52 columns × 7 rows rendered by app.js -->
+              </div>
+            </div>
+            <div class="timeline-bar-wrap">
+              <div class="timeline-bar-progress" id="timeline-progress"></div>
+            </div>
+          </div>
         </div>
 
         <!-- ESP32 status -->

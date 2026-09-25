@@ -23,13 +23,22 @@ const PING_INTERVAL_MS       = 25000; // keep-alive ping
 // ── State ─────────────────────────────────────────────────────────────────
 
 const state = {
-  sessionId:       null,   // active session ID string
-  username:        null,   // current GitHub username
-  deviceStatus:    'DISCONNECTED',  // AVAILABLE | BUSY | DISCONNECTED
-  ws:              null,
+  sessionId:        null,   // active session ID string
+  username:         null,   // current GitHub username
+  deviceStatus:     'DISCONNECTED',  // AVAILABLE | BUSY | DISCONNECTED
+  ws:               null,
   wsReconnectTimer: null,
   wsReconnectCount: 0,
-  pingTimer:       null,
+  pingTimer:        null,
+  // Synchronized Music & Timeline state
+  musicState:       'IDLE', // IDLE | PREPARING | READY | PLAYING | STOPPING
+  levels:           null,   // 52x7 array
+  timeline:         null,   // { tempo, bpm, duration_ms, events }
+  audioUrl:         null,
+  audioPlayer:      new Audio(),
+  animFrameId:      null,
+  playbackStartMs:  0,
+  activeCell:       null,
 };
 
 // ── DOM references ─────────────────────────────────────────────────────────
@@ -37,35 +46,41 @@ const state = {
 const $ = id => document.getElementById(id);
 
 const dom = {
-  bannerDot:      $('banner-dot'),
-  bannerText:     $('banner-text'),
-  deviceBanner:   $('device-banner'),
+  bannerDot:       $('banner-dot'),
+  bannerText:      $('banner-text'),
+  deviceBanner:    $('device-banner'),
 
-  connectPanel:   $('connect-panel'),
-  sessionPanel:   $('session-panel'),
+  connectPanel:    $('connect-panel'),
+  sessionPanel:    $('session-panel'),
 
-  usernameInput:  $('username-input'),
-  connectBtn:     $('connect-btn'),
-  connectError:   $('connect-error'),
+  usernameInput:   $('username-input'),
+  connectBtn:      $('connect-btn'),
+  connectError:    $('connect-error'),
 
-  ghAvatar:       $('gh-avatar'),
-  ghUsernameLabel:$('gh-username-label'),
-  sessionIdLabel: $('session-id-label'),
-  espDot:         $('esp-dot'),
-  espStatusText:  $('esp-status-text'),
-  disconnectBtn:  $('disconnect-btn'),
-  sessionError:   $('session-error'),
+  ghAvatar:        $('gh-avatar'),
+  ghUsernameLabel: $('gh-username-label'),
+  sessionIdLabel:  $('session-id-label'),
+  espDot:          $('esp-dot'),
+  espStatusText:   $('esp-status-text'),
+  disconnectBtn:   $('disconnect-btn'),
+  sessionError:    $('session-error'),
 
-  valStreak:      $('val-streak'),
-  valLongest:     $('val-longest'),
-  valToday:       $('val-today'),
-  valTotal:       $('val-total'),
-  valWeekly:      $('val-weekly'),
-  valMonthly:     $('val-monthly'),
+  valStreak:       $('val-streak'),
+  valLongest:      $('val-longest'),
+  valToday:        $('val-today'),
+  valTotal:        $('val-total'),
+  valWeekly:       $('val-weekly'),
+  valMonthly:      $('val-monthly'),
 
-  playBtn:        $('play-btn'),
-  stopBtn:        $('stop-btn'),
-  musicStatus:    $('music-status'),
+  // Synchronized Music Controls
+  musicToggleBtn:  $('music-toggle-btn'),
+  musicBtnIcon:    $('music-btn-icon'),
+  musicBtnText:    $('music-btn-text'),
+  musicBtnSpinner: $('music-btn-spinner'),
+  musicStateBadge: $('music-state-badge'),
+  musicStatusText: $('music-status-text'),
+  contribGrid:     $('contrib-grid'),
+  timelineProgress:$('timeline-progress'),
 };
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
@@ -149,6 +164,32 @@ function handleServerMessage(msg) {
   switch (msg.type) {
     case 'device_status':
       applyDeviceStatus(msg.status, msg.username);
+      break;
+
+    case 'music_ready':
+      console.log('[WS] ESP32 reported music_ready');
+      if (state.musicState === 'PREPARING') {
+        setMusicState('READY', 'ESP32 ready. Starting playback…');
+        // Trigger playback now that hardware is primed
+        triggerPlayCommand();
+      } else {
+        setMusicState('READY', 'ESP32 ready to play');
+      }
+      break;
+
+    case 'music_start':
+      console.log('[WS] music_start received');
+      startSynchronizedPlayback();
+      break;
+
+    case 'music_stop':
+      console.log('[WS] music_stop received');
+      stopSynchronizedPlayback();
+      break;
+
+    case 'music_loop':
+      console.log('[WS] music_loop received');
+      handlePlaybackLoop();
       break;
 
     case 'session_timeout':
@@ -300,6 +341,9 @@ function populateSessionPanel(data) {
   const u = data.username;
 
   state.currentStreak = stats.current_streak ?? 0;
+  state.levels = data.levels || null;
+  state.timeline = data.timeline || null;
+  state.audioUrl = data.audio_url || (state.sessionId ? `/api/music/${state.sessionId}/audio.wav` : null);
 
   dom.ghAvatar.src = `https://github.com/${u}.png?size=56`;
   dom.ghAvatar.alt = `${u} GitHub avatar`;
@@ -315,6 +359,21 @@ function populateSessionPanel(data) {
   setStatValue(dom.valWeekly,  stats.weekly_contributions ?? '–');
   setStatValue(dom.valMonthly, stats.monthly_contributions ?? '–');
 
+  // Render authentic 52x7 contribution grid
+  renderContributionGrid(state.levels);
+
+  // Initialize Audio Player element
+  if (state.audioUrl) {
+    state.audioPlayer.src = state.audioUrl;
+    state.audioPlayer.load();
+    state.audioPlayer.loop = false; // We handle loop explicitly for flawless sync
+    state.audioPlayer.onended = () => {
+      console.log('[Audio] Finished – looping seamlessly');
+      handlePlaybackLoop();
+    };
+  }
+
+  setMusicState('IDLE', 'Ready to play');
   updateEspStatus(state.deviceStatus);
 }
 
@@ -340,11 +399,13 @@ function showConnectPanel() {
 }
 
 function clearSessionState() {
+  stopSynchronizedPlayback();
   state.sessionId = null;
   state.username  = null;
-  if (dom.playBtn) dom.playBtn.classList.remove('playing');
-  if (dom.stopBtn) dom.stopBtn.disabled = true;
-  if (dom.musicStatus) dom.musicStatus.textContent = 'Ready to play melody';
+  state.levels    = null;
+  state.timeline  = null;
+  state.audioUrl  = null;
+  setMusicState('IDLE', 'Ready to play');
 }
 
 // ── Banner states ──────────────────────────────────────────────────────────
@@ -389,34 +450,266 @@ function setDotClass(dot, cls) {
   dot.className = dot.className.replace(/dot--\w+/g, '').trim() + ' ' + cls;
 }
 
-// ── ESP32 Hardware Music Controls (PLAY & STOP) ─────────────────────────
+// ── Contribution Grid Rendering ──────────────────────────────────────────
 
-function handlePlay() {
-  if (dom.playBtn && dom.playBtn.classList.contains('playing')) return;
+function renderContributionGrid(levels) {
+  if (!dom.contribGrid) return;
+  dom.contribGrid.innerHTML = '';
 
-  // Send simple WebSocket command to ESP32: {"type":"play"}
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify({ type: 'play' }));
+  // 52 weeks (cols), 7 days (rows)
+  for (let col = 0; col < 52; col++) {
+    for (let row = 0; row < 7; row++) {
+      let lvl = 0;
+      if (Array.isArray(levels) && levels[col] && levels[col][row] !== undefined) {
+        lvl = levels[col][row];
+      }
+      const cell = document.createElement('div');
+      cell.className = `contrib-cell lvl-${lvl}`;
+      cell.dataset.week = col;
+      cell.dataset.day = row;
+      cell.title = `Week ${col + 1}, Day ${row + 1}: Level ${lvl}`;
+      dom.contribGrid.appendChild(cell);
+    }
   }
-  // REST fallback
-  fetch(`${BASE_URL}/api/play`, { method: 'POST' }).catch(() => {});
-
-  if (dom.playBtn) dom.playBtn.classList.add('playing');
-  if (dom.stopBtn) dom.stopBtn.disabled = false;
-  if (dom.musicStatus) dom.musicStatus.textContent = '▶ Playing melody locally on ESP32 speaker…';
 }
 
-function handleStop() {
-  // Send simple WebSocket command to ESP32: {"type":"stop"}
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify({ type: 'stop' }));
-  }
-  // REST fallback
-  fetch(`${BASE_URL}/api/stop`, { method: 'POST' }).catch(() => {});
+// ── Music Playback State Machine ──────────────────────────────────────────
 
-  if (dom.playBtn) dom.playBtn.classList.remove('playing');
-  if (dom.stopBtn) dom.stopBtn.disabled = true;
-  if (dom.musicStatus) dom.musicStatus.textContent = '⏹ Stopped (Press PLAY to restart from beginning)';
+function setMusicState(newState, statusText = '') {
+  state.musicState = newState;
+
+  if (dom.musicStateBadge) {
+    dom.musicStateBadge.className = 'music-state-badge';
+    dom.musicStateBadge.textContent = newState;
+    dom.musicStateBadge.classList.add(`badge-${newState.toLowerCase()}`);
+  }
+
+  if (dom.musicStatusText && statusText) {
+    dom.musicStatusText.textContent = statusText;
+  }
+
+  if (!dom.musicToggleBtn) return;
+
+  if (newState === 'PREPARING') {
+    dom.musicToggleBtn.disabled = true;
+    dom.musicToggleBtn.classList.remove('is-playing');
+    dom.musicBtnSpinner.classList.remove('hidden');
+    dom.musicBtnText.textContent = 'Preparing…';
+  } else if (newState === 'PLAYING') {
+    dom.musicToggleBtn.disabled = false;
+    dom.musicToggleBtn.classList.add('is-playing');
+    dom.musicBtnSpinner.classList.add('hidden');
+    dom.musicBtnIcon.innerHTML = `
+      <svg class="icon-stop" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M6 6h12v12H6z"/>
+      </svg>
+    `;
+    dom.musicBtnText.textContent = 'Stop';
+  } else {
+    // IDLE / READY / STOPPING
+    dom.musicToggleBtn.disabled = false;
+    dom.musicToggleBtn.classList.remove('is-playing');
+    dom.musicBtnSpinner.classList.add('hidden');
+    dom.musicBtnIcon.innerHTML = `
+      <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+    `;
+    dom.musicBtnText.textContent = 'Play';
+  }
+}
+
+// ── Music Button Click Handler (Single Compact 40-48px Toggle) ────────────
+
+async function handleMusicToggle() {
+  if (state.musicState === 'PLAYING') {
+    // Currently playing -> STOP
+    triggerStopCommand();
+    return;
+  }
+
+  if (state.musicState === 'PREPARING') {
+    // Currently preparing -> cancel
+    triggerStopCommand();
+    setMusicState('IDLE', 'Playback cancelled');
+    return;
+  }
+
+  // Prevent multiple rapid clicks
+  if (dom.musicToggleBtn.disabled) return;
+
+  // Check if device is connected
+  if (state.deviceStatus === 'DISCONNECTED') {
+    setMusicState('IDLE', 'ESP32 not connected');
+    return;
+  }
+
+  setMusicState('PREPARING', 'Preparing audio & timeline…');
+
+  // Trigger backend preparation
+  try {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({
+        type: 'music_prepare',
+        base_url: BASE_URL
+      }));
+    }
+
+    const res = await fetch(`${BASE_URL}/api/music/prepare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const prepData = await res.json();
+
+    if (prepData.timeline) {
+      state.timeline = prepData.timeline;
+    }
+    if (prepData.audio_url) {
+      state.audioUrl = prepData.audio_url;
+      state.audioPlayer.src = state.audioUrl;
+      state.audioPlayer.load();
+    }
+
+    // If already READY or device responded immediately:
+    if (prepData.success && (state.musicState === 'READY' || prepData.state === 'READY')) {
+      triggerPlayCommand();
+    }
+  } catch (err) {
+    console.error('Music prepare error:', err);
+    setMusicState('IDLE', 'Unable to prepare music');
+  }
+}
+
+function triggerPlayCommand() {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: 'music_play' }));
+  }
+  fetch(`${BASE_URL}/api/music/play`, { method: 'POST' }).catch(() => {});
+}
+
+function triggerStopCommand() {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: 'music_stop' }));
+  }
+  fetch(`${BASE_URL}/api/music/stop`, { method: 'POST' }).catch(() => {});
+  stopSynchronizedPlayback();
+}
+
+// ── Synchronized Playback Engine ──────────────────────────────────────────
+
+function startSynchronizedPlayback() {
+  if (state.musicState === 'PLAYING') return;
+
+  setMusicState('PLAYING', '▶ Playing slow piano melody…');
+
+  // Clear previous cell highlight
+  clearCellHighlights();
+
+  // Reset audio playback position
+  state.audioPlayer.currentTime = 0;
+  state.audioPlayer.play().catch(err => {
+    console.warn('[Audio] HTML5 playback notice (user interaction required):', err);
+  });
+
+  state.playbackStartMs = performance.now();
+
+  // Start smooth timeline visual synchronization
+  if (state.animFrameId) cancelAnimationFrame(state.animFrameId);
+  state.animFrameId = requestAnimationFrame(syncAnimationLoop);
+}
+
+function stopSynchronizedPlayback() {
+  if (state.animFrameId) {
+    cancelAnimationFrame(state.animFrameId);
+    state.animFrameId = null;
+  }
+
+  try {
+    state.audioPlayer.pause();
+    state.audioPlayer.currentTime = 0;
+  } catch (_) {}
+
+  clearCellHighlights();
+
+  if (dom.timelineProgress) {
+    dom.timelineProgress.style.width = '0%';
+  }
+
+  setMusicState('IDLE', '⏹ Stopped');
+}
+
+function handlePlaybackLoop() {
+  if (state.musicState !== 'PLAYING') return;
+  console.log('[Loop] Seamlessly continuing synchronized piano loop');
+  clearCellHighlights();
+  state.playbackStartMs = performance.now();
+  state.audioPlayer.currentTime = 0;
+  state.audioPlayer.play().catch(() => {});
+}
+
+function clearCellHighlights() {
+  if (state.activeCell) {
+    state.activeCell.classList.remove('cell-highlight', 'cell-trail');
+    state.activeCell = null;
+  }
+  document.querySelectorAll('.cell-highlight, .cell-trail').forEach(el => {
+    el.classList.remove('cell-highlight', 'cell-trail');
+  });
+}
+
+function syncAnimationLoop() {
+  if (state.musicState !== 'PLAYING') return;
+
+  const durationMs = state.timeline ? state.timeline.duration_ms : 29538;
+  const currentMs = (state.audioPlayer.currentTime * 1000) || (performance.now() - state.playbackStartMs);
+
+  // Loop calculation
+  const loopCurrentMs = currentMs % durationMs;
+
+  // Update scrubber progress bar
+  if (dom.timelineProgress) {
+    const pct = Math.min(100, Math.max(0, (loopCurrentMs / durationMs) * 100));
+    dom.timelineProgress.style.width = `${pct.toFixed(1)}%`;
+  }
+
+  // Find active musical event in timeline
+  if (state.timeline && Array.isArray(state.timeline.events)) {
+    const events = state.timeline.events;
+    let currentEvent = null;
+
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i];
+      if (loopCurrentMs >= ev.time && loopCurrentMs < (ev.time + ev.duration)) {
+        currentEvent = ev;
+        break;
+      }
+    }
+
+    if (currentEvent) {
+      const targetCell = dom.contribGrid.querySelector(
+        `[data-week="${currentEvent.week}"][data-day="${currentEvent.day}"]`
+      );
+
+      if (targetCell && targetCell !== state.activeCell) {
+        if (state.activeCell) {
+          state.activeCell.classList.remove('cell-highlight');
+          state.activeCell.classList.add('cell-trail');
+          const prev = state.activeCell;
+          setTimeout(() => prev.classList.remove('cell-trail'), 400);
+        }
+        targetCell.classList.add('cell-highlight');
+        state.activeCell = targetCell;
+      }
+    } else if (state.activeCell) {
+      state.activeCell.classList.remove('cell-highlight');
+      state.activeCell.classList.add('cell-trail');
+      const prev = state.activeCell;
+      setTimeout(() => prev.classList.remove('cell-trail'), 400);
+      state.activeCell = null;
+    }
+  }
+
+  state.animFrameId = requestAnimationFrame(syncAnimationLoop);
 }
 
 // ── Event listeners ────────────────────────────────────────────────────────
@@ -425,7 +718,6 @@ dom.connectBtn.addEventListener('click', handleConnect);
 
 dom.usernameInput.addEventListener('keydown', e => {
   if (e.key === 'Enter') handleConnect();
-  // Hide error as user types
   if (!dom.connectError.classList.contains('hidden')) {
     hideError(dom.connectError);
   }
@@ -433,17 +725,12 @@ dom.usernameInput.addEventListener('keydown', e => {
 
 dom.disconnectBtn.addEventListener('click', handleDisconnect);
 
-if (dom.playBtn) {
-  dom.playBtn.addEventListener('click', handlePlay);
-}
-
-if (dom.stopBtn) {
-  dom.stopBtn.addEventListener('click', handleStop);
+if (dom.musicToggleBtn) {
+  dom.musicToggleBtn.addEventListener('click', handleMusicToggle);
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
 
-// Poll device status once on load as a fallback
 async function fetchInitialDeviceStatus() {
   try {
     const res = await fetch(`${BASE_URL}/api/device/status`);
@@ -454,9 +741,7 @@ async function fetchInitialDeviceStatus() {
   } catch { /* WS will update us anyway */ }
 }
 
-// Start WS connection immediately
 connectWebSocket();
 fetchInitialDeviceStatus();
 
-// Focus the username input on load
 dom.usernameInput.focus();

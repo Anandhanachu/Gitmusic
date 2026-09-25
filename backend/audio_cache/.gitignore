@@ -1,0 +1,3 @@
+# Audio cache directory
+*.wav
+!.gitkeep
