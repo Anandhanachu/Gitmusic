@@ -255,6 +255,7 @@ uint32_t compositionDurationMs = 29538;
 unsigned long playbackT0 = 0;
 int currentTimelineIdx = 0;
 int activeHighlightWeek = -1;
+int activeHighlightDay = -1;
 uint8_t activeHighlightMask = 0;
 unsigned long activeHighlightEndMs = 0;
 String currentAudioUrl = "";
@@ -675,6 +676,7 @@ void handleWebSocketMessage(WebsocketsMessage msg) {
     currentTimelineIdx = 0;
     activeHighlightWeek = -1;
     activeHighlightDay = -1;
+    activeHighlightMask = 0;
     playbackState = STATE_PLAYING;
     displayMode = MODE_STATS; // Display the authentic contribution grid
     drawStreakGraph(true);
