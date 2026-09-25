@@ -290,14 +290,17 @@ class DeviceManager:
         grid_start = current_week_sunday - timedelta(weeks=51)
 
         levels = [[0] * 7 for _ in range(52)]
+        counts = [[0] * 7 for _ in range(52)]
         for col in range(52):
             week_sunday = grid_start + timedelta(weeks=col)
             for row in range(7):
                 day = week_sunday + timedelta(days=row)
                 if day > today:
                     levels[col][row] = 0
+                    counts[col][row] = 0
                 else:
                     count = date_map.get(day, 0)
+                    counts[col][row] = count
                     levels[col][row] = count_to_level(count)
 
         flat_levels = [levels[c][r] for c in range(52) for r in range(7)]
@@ -323,20 +326,32 @@ class DeviceManager:
             },
         }
 
-        # Cache levels and pre-render piano composition in background
+        # Cache levels, counts, and pre-render piano composition in background
         if self._session:
             self._session.stats = stats
             self._session.levels = levels
+            self._session.counts = counts
             try:
                 from composer import compose_from_github
                 from piano_synth import render_composition_to_wav
-                timeline = compose_from_github(levels, stats.get("current_streak", 0))
+                timeline = compose_from_github(
+                    levels,
+                    stats.get("current_streak", 0),
+                    counts_grid=counts,
+                    username=stats.get("username", "")
+                )
                 self._session.timeline = timeline
                 cache_dir = os.path.join(os.path.dirname(__file__), "audio_cache")
                 wav_path = os.path.join(cache_dir, f"{self._session.session_id}.wav")
                 render_composition_to_wav(timeline, wav_path)
                 self._session.audio_path = wav_path
-                logger.info("Pre-rendered piano audio for session '%s' at %s", self._session.session_id, wav_path)
+                logger.info(
+                    "Pre-rendered piano audio for session '%s' (active_weeks=%d, bpm=%d, duration=%d ms)",
+                    self._session.session_id,
+                    timeline.get("active_week_count", 0),
+                    timeline.get("bpm", 0),
+                    timeline.get("duration_ms", 0),
+                )
             except Exception as exc:
                 logger.error("Error pre-rendering piano composition: %s", exc)
 
@@ -362,7 +377,13 @@ class DeviceManager:
         if not self._session.timeline or not self._session.audio_path or not os.path.exists(self._session.audio_path):
             from composer import compose_from_github
             from piano_synth import render_composition_to_wav
-            timeline = compose_from_github(self._session.levels, self._session.stats.get("current_streak", 0))
+            counts = getattr(self._session, "counts", self._session.levels)
+            timeline = compose_from_github(
+                self._session.levels,
+                self._session.stats.get("current_streak", 0),
+                counts_grid=counts,
+                username=self._session.username
+            )
             self._session.timeline = timeline
             cache_dir = os.path.join(os.path.dirname(__file__), "audio_cache")
             wav_path = os.path.join(cache_dir, f"{self._session.session_id}.wav")

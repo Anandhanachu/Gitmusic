@@ -247,7 +247,7 @@ struct MusicalEvent {
   uint8_t  velocity;
 };
 
-#define MAX_TIMELINE_EVENTS 140
+#define MAX_TIMELINE_EVENTS 256
 MusicalEvent timelineEvents[MAX_TIMELINE_EVENTS];
 int timelineEventCount = 0;
 uint32_t compositionDurationMs = 29538;
@@ -604,11 +604,8 @@ void handleWebSocketMessage(WebsocketsMessage msg) {
     Serial.printf("[Session] ✔ Received GitHub update for user: '%s'\n", doc["username"] | "");
     parseGitHubUpdate(doc);
     printStats();
-    displayMode = MODE_STATS;
-    clearDisplay();
-    drawUsername(gmData.username, true);
-    drawStreakGraph(true);
-    Serial.println("[Display] 52-week contribution graph and username loaded.");
+    startSweepAnimation(); // Runs special column reveal animation, streak chimes & celebration sparkle!
+    Serial.println("[Display] Started column reveal sweep animation before showing streak.");
 
   } else if (strcmp(type, "session_end") == 0) {
     Serial.println("[Session] Session ended by user/backend.");
@@ -819,9 +816,32 @@ void initI2S() {
 // ==========================================================================
 
 void playNote(float freq, int durationMs, float intensity) {
-  // Deprecated: Audio is rendered on backend as realistic slow piano PCM WAV
-  // streamed via audioPlayerTask to I2S. Simple ESP32 tone generation is removed.
-  return;
+  // If active synchronized piano stream is running on Core 0, do not collide with stream
+  if (playbackState == STATE_PLAYING) return;
+  if (freq <= 0.0f || durationMs <= 0) return;
+
+  const int   totalSamples = (SAMPLE_RATE * durationMs) / 1000;
+  const float amplitude    = 8500.0f * max(0.2f, min(1.0f, intensity));
+  const float twoPiF       = 2.0f * PI * freq;
+
+  const int CHUNK = 128;
+  int16_t   buf[CHUNK];
+  int       written = 0;
+  size_t    bytesOut;
+
+  while (written < totalSamples) {
+    int chunk = min(CHUNK, totalSamples - written);
+    for (int i = 0; i < chunk; i++) {
+      float t    = (float)(written + i) / (float)SAMPLE_RATE;
+      float frac = (float)(written + i) / (float)totalSamples;
+      float env  = 1.0f;
+      if (frac < 0.10f) env = frac / 0.10f;          // attack
+      if (frac > 0.80f) env = (1.0f - frac) / 0.20f;  // release
+      buf[i] = (int16_t)(amplitude * env * sinf(twoPiF * t));
+    }
+    i2s_write(I2S_PORT, buf, chunk * sizeof(int16_t), &bytesOut, portMAX_DELAY);
+    written += chunk;
+  }
 }
 
 // Pitch ascends across 2.5 octaves as streak builds up!
