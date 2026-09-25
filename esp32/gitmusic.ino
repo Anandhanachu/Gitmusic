@@ -70,8 +70,8 @@ using namespace websockets;
 #define WS_SERVER_PATH      "/ws/device"
 #define WS_SERVER_URL       "ws://172.20.10.10:8000/ws/device"
 #define DEVICE_ID           "gitmusic-01"
-#define RECONNECT_DELAY_MS  5000
-#define PING_INTERVAL_MS    10000
+#define RECONNECT_DELAY_MS  3000
+#define PING_INTERVAL_MS    5000
 
 // Compatibility macro for ArduinoJson v6 vs v7
 #if ARDUINOJSON_VERSION_MAJOR >= 7
@@ -516,20 +516,23 @@ void connectWebSocket() {
 }
 
 void sendRegistration() {
-  ALLOC_JSON_DOC(doc, 128);
-  doc["type"]      = "device_register";
-  doc["device_id"] = DEVICE_ID;
+  static JsonDocument regDoc;
+  regDoc.clear();
+  regDoc["type"]      = "device_register";
+  regDoc["device_id"] = DEVICE_ID;
   char buf[128];
-  serializeJson(doc, buf);
+  serializeJson(regDoc, buf);
   wsClient.send(buf);
   Serial.printf("[Device] Sent registration request (ID: '%s')\n", DEVICE_ID);
 }
 
 void sendPing() {
-  ALLOC_JSON_DOC(doc, 32);
-  doc["type"] = "ping";
+  wsClient.ping(); // Send RFC 6455 Ping frame to keep connection continuously alive
+  static JsonDocument pingDoc;
+  pingDoc.clear();
+  pingDoc["type"] = "ping";
   char buf[32];
-  serializeJson(doc, buf);
+  serializeJson(pingDoc, buf);
   wsClient.send(buf);
 }
 
@@ -561,11 +564,10 @@ void handleWebSocketEvent(WebsocketsEvent event, String data) {
 }
 
 void handleWebSocketMessage(WebsocketsMessage msg) {
-  String payload = msg.data();
-  Serial.printf("[WS Message] <- %s\n", payload.c_str());
-
-  ALLOC_JSON_DOC(doc, 4096);   // 364 levels (0-4) + metadata
-  DeserializationError err = deserializeJson(doc, payload);
+  // Use static JsonDocument on the heap to prevent stack overflow on Core 1
+  static JsonDocument doc;
+  doc.clear();
+  DeserializationError err = deserializeJson(doc, msg.data());
   if (err) { Serial.printf("[JSON] Deserialization error: %s\n", err.c_str()); return; }
 
   const char* type = doc["type"] | "";
@@ -586,7 +588,8 @@ void handleWebSocketMessage(WebsocketsMessage msg) {
   } else if (strcmp(type, "session_end") == 0) {
     Serial.println("[Session] Session ended by user/backend.");
     stopSynchronizedMusic();
-    fadeOutDisplay();
+    clearDisplay();
+    drawText3x5(4, 13, "GITMUSIC", {70, 70, 70});
     memset(&gmData, 0, sizeof(gmData));
     gmData.sessionActive = false;
     displayMode = MODE_IDLE;
@@ -621,35 +624,26 @@ void handleWebSocketMessage(WebsocketsMessage msg) {
     Serial.printf("[Music] Parsed %d timeline events (duration: %u ms)\n", timelineEventCount, compositionDurationMs);
     Serial.printf("[Music] Audio stream URL: %s\n", currentAudioUrl.c_str());
 
-    // Verify audio stream connection via lightweight check
-    HTTPClient testHttp;
-    testHttp.begin(currentAudioUrl);
-    testHttp.setTimeout(3000);
-    int httpCode = testHttp.GET();
-    if (httpCode == HTTP_CODE_OK) {
-      Serial.println("[Music] Audio file accessible! Sending music_ready to backend...");
-      playbackState = STATE_READY;
-      testHttp.end();
-
-      ALLOC_JSON_DOC(resp, 64);
-      resp["type"] = "music_ready";
-      char respBuf[64];
-      serializeJson(resp, respBuf);
-      wsClient.send(respBuf);
-    } else {
-      Serial.printf("[Music] Audio check returned HTTP %d\n", httpCode);
-      testHttp.end();
-      // Even if check failed, set READY so playback attempt proceeds
-      playbackState = STATE_READY;
-      ALLOC_JSON_DOC(resp, 64);
-      resp["type"] = "music_ready";
-      char respBuf[64];
-      serializeJson(resp, respBuf);
-      wsClient.send(respBuf);
-    }
+    playbackState = STATE_READY;
+    static JsonDocument resp;
+    resp.clear();
+    resp["type"] = "music_ready";
+    char respBuf[64];
+    serializeJson(resp, respBuf);
+    wsClient.send(respBuf);
+    Serial.println("[Music] ✔ Audio primed. Sent music_ready to backend.");
 
   } else if (strcmp(type, "music_start") == 0 || strcmp(type, "play") == 0) {
-    Serial.println("[Music] ▶ START command received: launching synchronized audio and LED timeline!");
+    if (doc.containsKey("audio_url")) {
+      const char* u = doc["audio_url"] | "";
+      if (strlen(u) > 0) {
+        String aUrl = u;
+        if (aUrl.indexOf("localhost") >= 0) aUrl.replace("localhost", WS_SERVER_HOST);
+        if (aUrl.indexOf("127.0.0.1") >= 0) aUrl.replace("127.0.0.1", WS_SERVER_HOST);
+        currentAudioUrl = aUrl;
+      }
+    }
+    Serial.println("[Music] ▶ START command received: launching audio stream & LED timeline!");
     playbackT0 = millis();
     currentTimelineIdx = 0;
     activeHighlightWeek = -1;
@@ -928,11 +922,7 @@ void tickLEDTimeline() {
     }
     Serial.println("[LED Timeline] Looping composition to beginning");
 
-    ALLOC_JSON_DOC(doc, 64);
-    doc["type"] = "music_loop";
-    char buf[64];
-    serializeJson(doc, buf);
-    wsClient.send(buf);
+    wsClient.send("{\"type\":\"music_loop\"}");
   }
 
   // Fade active highlight back to authentic green level color
@@ -1434,10 +1424,6 @@ void tickStatsAnimation() {
 // ==========================================================================
 
 void fadeOutDisplay() {
-  for (int br = 100; br >= 0; br -= 8) {
-    dma_display->setBrightness8((uint8_t)max(0, br));
-    delay(50);
-  }
   clearDisplay();
   dma_display->setBrightness8(255);
 }

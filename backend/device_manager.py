@@ -248,6 +248,17 @@ class DeviceManager:
             logger.error("Failed to send message to device: %s", exc)
             return False
 
+    def _get_lan_ip(self) -> str:
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "172.20.10.10"
+
     async def send_github_update(self, stats: dict) -> bool:
         """
         Send processed GitHub stats to the ESP32.
@@ -257,14 +268,6 @@ class DeviceManager:
         """
         from datetime import date, timedelta
 
-        # ── Build 7×52 contribution level grid ──────────────────────────────
-        # GitHub GraphQL returns daily counts (0..N).
-        # We convert counts to GitHub-style levels 0–4:
-        #   0 = no contributions
-        #   1 = 1-3 contributions
-        #   2 = 4-6 contributions
-        #   3 = 7-9 contributions
-        #   4 = 10+ contributions
         def count_to_level(count: int) -> int:
             if count == 0: return 0
             if count <= 3: return 1
@@ -272,8 +275,7 @@ class DeviceManager:
             if count <= 9: return 3
             return 4
 
-        # Build date→count map from raw_days if backend passed it through
-        raw_days = stats.get("raw_days", [])  # list of {date: str, count: int}
+        raw_days = stats.get("raw_days", [])
         date_map: dict = {}
         for entry in raw_days:
             try:
@@ -282,33 +284,24 @@ class DeviceManager:
             except Exception:
                 pass
 
-        # Build a grid covering 52 weeks ending on the current week.
-        # Column 0 = oldest week (51 weeks ago), column 51 = current week.
-        # Row 0 = Sunday, Row 1 = Monday, ..., Row 6 = Saturday (GitHub standard).
         today = date.today()
-        # Days since last Sunday (Python Monday=0, Sunday=6)
         days_since_sunday = (today.weekday() + 1) % 7
         current_week_sunday = today - timedelta(days=days_since_sunday)
-        # Start of grid: 51 weeks before the current week's Sunday
         grid_start = current_week_sunday - timedelta(weeks=51)
 
-        # levels[col][row] → col=week (0..51), row=weekday (0=Sun..6=Sat)
         levels = [[0] * 7 for _ in range(52)]
         for col in range(52):
             week_sunday = grid_start + timedelta(weeks=col)
             for row in range(7):
                 day = week_sunday + timedelta(days=row)
-                # Days in the future (later than today in current week) remain 0 (empty/off)
                 if day > today:
                     levels[col][row] = 0
                 else:
                     count = date_map.get(day, 0)
                     levels[col][row] = count_to_level(count)
 
-        # Flatten to a 1-D list (col-major: col 0 row 0..6, col 1 row 0..6, ...)
         flat_levels = [levels[c][r] for c in range(52) for r in range(7)]
 
-        # ── Audio parameters ─────────────────────────────────────────────────
         streak = stats.get("current_streak", 0)
         intensity = min(1.0, round(streak / 100.0, 3))
         pattern = streak % 7
@@ -322,7 +315,6 @@ class DeviceManager:
             "total_contributions": stats.get("total_contributions", 0),
             "weekly_contributions": stats.get("weekly_contributions", 0),
             "monthly_contributions": stats.get("monthly_contributions", 0),
-            # Real contribution level grid: 364 values, 0–4 each
             "levels": flat_levels,
             "music": {
                 "enabled": True,
@@ -348,7 +340,15 @@ class DeviceManager:
             except Exception as exc:
                 logger.error("Error pre-rendering piano composition: %s", exc)
 
-        return await self._send_to_device(message)
+        ok = await self._send_to_device(message)
+
+        # Proactively prepare music on ESP32 so it is armed immediately
+        try:
+            await self.prepare_music("http://localhost:8000")
+        except Exception as exc:
+            logger.warning("Auto-prepare music exception: %s", exc)
+
+        return ok
 
     async def prepare_music(self, base_url: str) -> dict:
         """
@@ -382,24 +382,8 @@ class DeviceManager:
             for ev in self._session.timeline.get("events", [])
         ]
 
-        # For the ESP32 device on the local network, ensure base_url uses LAN IP if localhost
-        import socket
-        def _get_lan_ip():
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                ip = s.getsockname()[0]
-                s.close()
-                return ip
-            except Exception:
-                return "10.63.92.168"
-
-        esp_base_url = base_url
-        if "localhost" in esp_base_url or "127.0.0.1" in esp_base_url:
-            lan_ip = _get_lan_ip()
-            esp_base_url = esp_base_url.replace("localhost", lan_ip).replace("127.0.0.1", lan_ip)
-
-        audio_url = f"{esp_base_url.rstrip('/')}/api/music/{self._session.session_id}/audio.wav"
+        lan_ip = self._get_lan_ip()
+        audio_url = f"http://{lan_ip}:8000/api/music/{self._session.session_id}/audio.wav"
 
         message = {
             "type": "prepare_music",
@@ -427,6 +411,13 @@ class DeviceManager:
         """Sends START command to ESP32."""
         if self._session:
             self._session.music_state = "PLAYING"
+            lan_ip = self._get_lan_ip()
+            audio_url = f"http://{lan_ip}:8000/api/music/{self._session.session_id}/audio.wav"
+            return await self._send_to_device({
+                "type": "music_start",
+                "audio_url": audio_url,
+                "duration_ms": self._session.timeline.get("duration_ms", 29538) if self._session.timeline else 29538,
+            })
         return await self._send_to_device({"type": "music_start"})
 
     async def stop_music(self) -> bool:

@@ -31,11 +31,10 @@ const state = {
   wsReconnectCount: 0,
   pingTimer:        null,
   // Synchronized Music & Timeline state
-  musicState:       'IDLE', // IDLE | PREPARING | READY | PLAYING | STOPPING
+  musicState:       'IDLE', // IDLE | PLAYING | STOPPED
   levels:           null,   // 52x7 array
   timeline:         null,   // { tempo, bpm, duration_ms, events }
   audioUrl:         null,
-  audioPlayer:      new Audio(),
   animFrameId:      null,
   playbackStartMs:  0,
   activeCell:       null,
@@ -168,23 +167,23 @@ function handleServerMessage(msg) {
 
     case 'music_ready':
       console.log('[WS] ESP32 reported music_ready');
-      if (state.musicState === 'PREPARING') {
-        setMusicState('READY', 'ESP32 ready. Starting playback…');
-        // Trigger playback now that hardware is primed
-        triggerPlayCommand();
-      } else {
-        setMusicState('READY', 'ESP32 ready to play');
+      if (state.musicState !== 'PLAYING') {
+        setMusicState('IDLE', 'Ready to play on ESP32 speaker');
       }
       break;
 
     case 'music_start':
       console.log('[WS] music_start received');
-      startSynchronizedPlayback();
+      if (state.musicState !== 'PLAYING') {
+        startSynchronizedPlayback();
+      }
       break;
 
     case 'music_stop':
       console.log('[WS] music_stop received');
-      stopSynchronizedPlayback();
+      if (state.musicState === 'PLAYING') {
+        stopSynchronizedPlayback();
+      }
       break;
 
     case 'music_loop':
@@ -362,18 +361,7 @@ function populateSessionPanel(data) {
   // Render authentic 52x7 contribution grid
   renderContributionGrid(state.levels);
 
-  // Initialize Audio Player element
-  if (state.audioUrl) {
-    state.audioPlayer.src = state.audioUrl;
-    state.audioPlayer.load();
-    state.audioPlayer.loop = false; // We handle loop explicitly for flawless sync
-    state.audioPlayer.onended = () => {
-      console.log('[Audio] Finished – looping seamlessly');
-      handlePlaybackLoop();
-    };
-  }
-
-  setMusicState('IDLE', 'Ready to play');
+  setMusicState('IDLE', 'Ready to play on ESP32 speaker');
   updateEspStatus(state.deviceStatus);
 }
 
@@ -490,12 +478,7 @@ function setMusicState(newState, statusText = '') {
 
   if (!dom.musicToggleBtn) return;
 
-  if (newState === 'PREPARING') {
-    dom.musicToggleBtn.disabled = true;
-    dom.musicToggleBtn.classList.remove('is-playing');
-    dom.musicBtnSpinner.classList.remove('hidden');
-    dom.musicBtnText.textContent = 'Preparing…';
-  } else if (newState === 'PLAYING') {
+  if (newState === 'PLAYING') {
     dom.musicToggleBtn.disabled = false;
     dom.musicToggleBtn.classList.add('is-playing');
     dom.musicBtnSpinner.classList.add('hidden');
@@ -506,7 +489,7 @@ function setMusicState(newState, statusText = '') {
     `;
     dom.musicBtnText.textContent = 'Stop';
   } else {
-    // IDLE / READY / STOPPING
+    // IDLE / STOPPED / READY
     dom.musicToggleBtn.disabled = false;
     dom.musicToggleBtn.classList.remove('is-playing');
     dom.musicBtnSpinner.classList.add('hidden');
@@ -519,68 +502,30 @@ function setMusicState(newState, statusText = '') {
   }
 }
 
-// ── Music Button Click Handler (Single Compact 40-48px Toggle) ────────────
+// ── Music Button Click Handler (Instant Play <-> Stop Toggle) ────────────
 
-async function handleMusicToggle() {
-  if (state.musicState === 'PLAYING') {
-    // Currently playing -> STOP
-    triggerStopCommand();
-    return;
-  }
-
-  if (state.musicState === 'PREPARING') {
-    // Currently preparing -> cancel
-    triggerStopCommand();
-    setMusicState('IDLE', 'Playback cancelled');
-    return;
-  }
-
-  // Prevent multiple rapid clicks
-  if (dom.musicToggleBtn.disabled) return;
-
-  // Check if device is connected
+function handleMusicToggle() {
   if (state.deviceStatus === 'DISCONNECTED') {
-    setMusicState('IDLE', 'ESP32 not connected');
+    if (dom.musicStatusText) {
+      dom.musicStatusText.textContent = 'ESP32 device is not connected';
+    }
     return;
   }
 
-  setMusicState('PREPARING', 'Preparing audio & timeline…');
-
-  // Trigger backend preparation
-  try {
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({
-        type: 'music_prepare',
-        base_url: BASE_URL
-      }));
-    }
-
-    const res = await fetch(`${BASE_URL}/api/music/prepare`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    const prepData = await res.json();
-
-    if (prepData.timeline) {
-      state.timeline = prepData.timeline;
-    }
-    if (prepData.audio_url) {
-      state.audioUrl = prepData.audio_url;
-      state.audioPlayer.src = state.audioUrl;
-      state.audioPlayer.load();
-    }
-
-    // If already READY or device responded immediately:
-    if (prepData.success && (state.musicState === 'READY' || prepData.state === 'READY')) {
-      triggerPlayCommand();
-    }
-  } catch (err) {
-    console.error('Music prepare error:', err);
-    setMusicState('IDLE', 'Unable to prepare music');
+  if (state.musicState === 'PLAYING') {
+    // Currently playing -> toggle immediately to STOP
+    triggerStopCommand();
+  } else {
+    // Currently idle/stopped -> toggle immediately to PLAY
+    triggerPlayCommand();
   }
 }
 
 function triggerPlayCommand() {
+  // Start synchronized visual animation immediately and switch button to Stop
+  startSynchronizedPlayback();
+
+  // Send play command to backend and ESP32
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     state.ws.send(JSON.stringify({ type: 'music_play' }));
   }
@@ -588,32 +533,27 @@ function triggerPlayCommand() {
 }
 
 function triggerStopCommand() {
+  // Stop synchronized visual animation immediately and switch button to Play
+  stopSynchronizedPlayback();
+
+  // Send stop command to backend and ESP32
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     state.ws.send(JSON.stringify({ type: 'music_stop' }));
   }
   fetch(`${BASE_URL}/api/music/stop`, { method: 'POST' }).catch(() => {});
-  stopSynchronizedPlayback();
 }
 
-// ── Synchronized Playback Engine ──────────────────────────────────────────
+// ── Synchronized Playback Engine (Website is visual-only, Sound only on ESP32) ──
 
 function startSynchronizedPlayback() {
   if (state.musicState === 'PLAYING') return;
 
-  setMusicState('PLAYING', '▶ Playing slow piano melody…');
-
-  // Clear previous cell highlight
+  setMusicState('PLAYING', '▶ Playing melody on ESP32 speaker…');
   clearCellHighlights();
-
-  // Reset audio playback position
-  state.audioPlayer.currentTime = 0;
-  state.audioPlayer.play().catch(err => {
-    console.warn('[Audio] HTML5 playback notice (user interaction required):', err);
-  });
 
   state.playbackStartMs = performance.now();
 
-  // Start smooth timeline visual synchronization
+  // Visual synchronization loop (NO audio from browser)
   if (state.animFrameId) cancelAnimationFrame(state.animFrameId);
   state.animFrameId = requestAnimationFrame(syncAnimationLoop);
 }
@@ -623,11 +563,6 @@ function stopSynchronizedPlayback() {
     cancelAnimationFrame(state.animFrameId);
     state.animFrameId = null;
   }
-
-  try {
-    state.audioPlayer.pause();
-    state.audioPlayer.currentTime = 0;
-  } catch (_) {}
 
   clearCellHighlights();
 
@@ -640,11 +575,9 @@ function stopSynchronizedPlayback() {
 
 function handlePlaybackLoop() {
   if (state.musicState !== 'PLAYING') return;
-  console.log('[Loop] Seamlessly continuing synchronized piano loop');
+  console.log('[Loop] Seamlessly continuing synchronized timeline loop');
   clearCellHighlights();
   state.playbackStartMs = performance.now();
-  state.audioPlayer.currentTime = 0;
-  state.audioPlayer.play().catch(() => {});
 }
 
 function clearCellHighlights() {
@@ -661,7 +594,7 @@ function syncAnimationLoop() {
   if (state.musicState !== 'PLAYING') return;
 
   const durationMs = state.timeline ? state.timeline.duration_ms : 29538;
-  const currentMs = (state.audioPlayer.currentTime * 1000) || (performance.now() - state.playbackStartMs);
+  const currentMs = performance.now() - state.playbackStartMs;
 
   // Loop calculation
   const loopCurrentMs = currentMs % durationMs;
@@ -672,7 +605,7 @@ function syncAnimationLoop() {
     dom.timelineProgress.style.width = `${pct.toFixed(1)}%`;
   }
 
-  // Find active musical event in timeline
+  // Find active musical event in timeline and illuminate corresponding cell
   if (state.timeline && Array.isArray(state.timeline.events)) {
     const events = state.timeline.events;
     let currentEvent = null;
