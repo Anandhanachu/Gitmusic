@@ -61,8 +61,11 @@ using namespace websockets;
 // USER CONFIGURATION
 // ==========================================================================
 
-#define WIFI_SSID           "Fiber"
-#define WIFI_PASSWORD       "12345678"
+#define WIFI_SSID           "anand iPhone"
+#define WIFI_PASSWORD       "achu1234"
+
+#define FALLBACK_SSID       "Fiber"
+#define FALLBACK_PASSWORD   "12345678"
 
 // Backend Host & Port (Your computer's current IP is 172.20.10.10)
 #define WS_SERVER_HOST      "172.20.10.10"
@@ -423,25 +426,44 @@ void loop() {
 // ==========================================================================
 
 void connectWifi() {
-  Serial.printf("                Connecting to SSID: \"%s\" ", WIFI_SSID);
-  if (dma_display) {
-    clearDisplay();
-    drawText3x5(8, 13, "WIFI...", {0, 140, 220});
-  }
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);        // CRITICAL: Disable WiFi modem sleep to prevent latency & disconnects
   WiFi.setAutoReconnect(true); // Auto-reconnect if router drops connection
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(400);
-    Serial.print(".");
-    if (millis() - start > 20000) {
-      Serial.println("\n[WiFi] Connection timeout! Restarting ESP32...");
-      ESP.restart();
+
+  const char* ssids[] = { WIFI_SSID, FALLBACK_SSID };
+  const char* passs[] = { WIFI_PASSWORD, FALLBACK_PASSWORD };
+
+  for (int attempt = 0; attempt < 2 && WiFi.status() != WL_CONNECTED; attempt++) {
+    const char* curSsid = ssids[attempt];
+    const char* curPass = passs[attempt];
+    if (!curSsid || strlen(curSsid) == 0) continue;
+
+    Serial.printf("                Connecting to SSID: \"%s\" ", curSsid);
+    if (dma_display) {
+      clearDisplay();
+      drawText3x5(8, 13, "WIFI...", {0, 140, 220});
+    }
+    WiFi.begin(curSsid, curPass);
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - start < 10000)) {
+      delay(400);
+      Serial.print(".");
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println(" CONNECTED!");
+      break;
+    } else {
+      Serial.println(" Timeout.");
     }
   }
-  Serial.println();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\n[WiFi] Could not connect to primary or fallback network.");
+    Serial.println("[WiFi] Trying primary network in background...");
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    return;
+  }
+
   Serial.println("                ✔ WiFi Connected Successfully!");
   Serial.printf("                - IP Address : %s\n", WiFi.localIP().toString().c_str());
   Serial.printf("                - Gateway    : %s\n", WiFi.gatewayIP().toString().c_str());
@@ -464,6 +486,9 @@ void connectWebSocket() {
     Serial.println("                ✖ WiFi not connected. Cannot reach backend.");
     return;
   }
+
+  // Close previous socket handle to avoid dangling connections
+  wsClient.close();
 
   // Parse host, port, and path reliably from WS_SERVER_URL or WS_SERVER_HOST
   String host = WS_SERVER_HOST;
