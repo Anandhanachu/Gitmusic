@@ -936,6 +936,147 @@ body {
   color: var(--accent-cyan);
 }
 
+/* ── Session Header & Back Button ─────────────────────────────── */
+.session-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.session-user-meta {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.avatar-wrap {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.gh-avatar {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid var(--gh-green);
+  object-fit: cover;
+  position: relative;
+  z-index: 1;
+}
+
+.avatar-glow {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(57, 211, 83, 0.4) 0%, transparent 70%);
+  z-index: 0;
+}
+
+.session-username {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.15rem;
+}
+
+.session-sub {
+  font-size: 0.8rem;
+  color: var(--gh-green);
+  font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.session-sub::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gh-green);
+  box-shadow: 0 0 6px var(--gh-green);
+}
+
+.btn-back-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 0.6rem 1.1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.btn-back-search:hover {
+  background: rgba(57, 211, 83, 0.15);
+  border-color: var(--gh-green);
+  color: #56ff74;
+  transform: translateX(-3px);
+  box-shadow: 0 4px 16px rgba(57, 211, 83, 0.25);
+}
+
+.btn-back-search .back-icon {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.2s ease;
+}
+
+.btn-back-search:hover .back-icon {
+  transform: translateX(-2px);
+}
+
+.btn-secondary-outline {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  color: #ff7b72;
+  padding: 0.75rem 1.25rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 1rem;
+}
+
+.btn-secondary-outline:hover:not(:disabled) {
+  background: rgba(248, 81, 73, 0.18);
+  border-color: rgba(248, 81, 73, 0.6);
+  color: #ffa198;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(248, 81, 73, 0.25);
+}
+
+.btn-secondary-outline:disabled, .btn-back-search:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.back-icon-sm {
+  width: 16px;
+  height: 16px;
+}
+
 /* ── How it works ─────────────────────────────────────────── */
 .how-it-works {
   padding: 0.5rem 0 1.5rem;

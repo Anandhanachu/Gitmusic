@@ -62,6 +62,7 @@ const dom = {
   espDot:          $('esp-dot'),
   espStatusText:   $('esp-status-text'),
   disconnectBtn:   $('disconnect-btn'),
+  backSearchBtn:   $('back-search-btn'),
   sessionError:    $('session-error'),
 
   valStreak:       $('val-streak'),
@@ -315,19 +316,23 @@ async function handleConnect() {
 // ── Disconnect flow ────────────────────────────────────────────────────────
 
 async function handleDisconnect() {
-  if (!state.sessionId) return;
+  if (dom.disconnectBtn) dom.disconnectBtn.disabled = true;
+  if (dom.backSearchBtn) dom.backSearchBtn.disabled = true;
 
-  dom.disconnectBtn.disabled = true;
-
-  try {
-    await fetch(`${BASE_URL}/api/disconnect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: state.sessionId }),
-    });
-  } catch (err) {
-    console.error('Disconnect error:', err);
+  if (state.sessionId) {
+    try {
+      await fetch(`${BASE_URL}/api/disconnect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: state.sessionId }),
+      });
+    } catch (err) {
+      console.error('Disconnect error:', err);
+    }
   }
+
+  if (dom.disconnectBtn) dom.disconnectBtn.disabled = false;
+  if (dom.backSearchBtn) dom.backSearchBtn.disabled = false;
 
   clearSessionState();
   showConnectPanel();
@@ -657,6 +662,16 @@ dom.usernameInput.addEventListener('keydown', e => {
 });
 
 dom.disconnectBtn.addEventListener('click', handleDisconnect);
+
+if (dom.backSearchBtn) {
+  dom.backSearchBtn.addEventListener('click', handleDisconnect);
+}
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && dom.sessionPanel && !dom.sessionPanel.classList.contains('hidden')) {
+    handleDisconnect();
+  }
+});
 
 if (dom.musicToggleBtn) {
   dom.musicToggleBtn.addEventListener('click', handleMusicToggle);
