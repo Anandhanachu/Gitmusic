@@ -100,9 +100,12 @@ class DeviceManager:
                 self._session = None
         logger.info("ESP32 device registered: %s", self.DEVICE_ID)
 
-    async def unregister_device(self) -> None:
+    async def unregister_device(self, ws: Optional[WebSocket] = None) -> bool:
         """Called when the ESP32 disconnects."""
         async with self._lock:
+            if ws is not None and self._device_ws is not ws:
+                logger.info("Ignoring unregister from stale WebSocket connection.")
+                return False
             self._device_ws = None
             self._device_connected = False
             # Clean up active session when physical device disconnects (e.g. during reflashing)
@@ -111,6 +114,7 @@ class DeviceManager:
                     self._session._timeout_task.cancel()
                 self._session = None
         logger.warning("ESP32 device disconnected: %s", self.DEVICE_ID)
+        return True
 
     # ------------------------------------------------------------------
     # Session / device acquisition

@@ -133,18 +133,17 @@ function connectWebSocket() {
 
 function scheduleWsReconnect() {
   if (state.wsReconnectTimer) return; // already scheduled
-  if (state.wsReconnectCount >= MAX_RECONNECT_ATTEMPTS) {
-    setBannerDisconnected('Server unreachable. Refresh the page to retry.');
-    return;
-  }
 
   state.wsReconnectCount++;
   setBannerConnecting();
 
+  // Retry infinitely with bounded delay (max 3500ms)
+  const delayMs = Math.min(RECONNECT_DELAY_MS * Math.min(state.wsReconnectCount, 3), 3500);
+
   state.wsReconnectTimer = setTimeout(() => {
     state.wsReconnectTimer = null;
     connectWebSocket();
-  }, RECONNECT_DELAY_MS * Math.min(state.wsReconnectCount, 4));
+  }, delayMs);
 }
 
 function startPing() {
@@ -776,5 +775,27 @@ async function fetchInitialDeviceStatus() {
 
 connectWebSocket();
 fetchInitialDeviceStatus();
+
+// Continuous connection assurance:
+// 1. Recheck immediately when window regains focus or comes back online
+window.addEventListener('online', () => {
+  connectWebSocket();
+  fetchInitialDeviceStatus();
+});
+
+window.addEventListener('focus', () => {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    connectWebSocket();
+  }
+  fetchInitialDeviceStatus();
+});
+
+// 2. Periodic background status poll every 5 seconds (heartbeat fallback)
+setInterval(() => {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    connectWebSocket();
+  }
+  fetchInitialDeviceStatus();
+}, 5000);
 
 dom.usernameInput.focus();

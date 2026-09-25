@@ -380,12 +380,13 @@ async def ws_device(ws: WebSocket):
         logger.error("ESP32 WebSocket error: %s", exc)
     finally:
         if registered:
-            await device_manager.unregister_device()
-            await ws_manager.broadcast({
-                "type": "device_status",
-                "status": "DISCONNECTED",
-                "username": None,
-            })
+            was_unregistered = await device_manager.unregister_device(ws)
+            if was_unregistered:
+                await ws_manager.broadcast({
+                    "type": "device_status",
+                    "status": "DISCONNECTED",
+                    "username": None,
+                })
 
 
 # ---------------------------------------------------------------------------
