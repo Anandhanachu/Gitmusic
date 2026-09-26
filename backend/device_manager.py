@@ -88,17 +88,17 @@ class DeviceManager:
         async with self._lock:
             self._device_ws = ws
             self._device_connected = True
-            # When ESP32 freshly boots or reconnects, release any dead orphaned session
-            if self._session is not None:
-                logger.info(
-                    "Device freshly reconnected: resetting previous session '%s' (user '%s')",
-                    self._session.session_id,
-                    self._session.username,
-                )
-                if self._session._timeout_task:
-                    self._session._timeout_task.cancel()
-                self._session = None
+            current_sess = self._session
         logger.info("ESP32 device registered: %s", self.DEVICE_ID)
+
+        # If a session is already active (user connected before or during ESP32 boot),
+        # sync the authentic GitHub stats & composition to the ESP32 immediately!
+        if current_sess and current_sess.stats:
+            logger.info("Syncing active session '%s' to freshly connected ESP32...", current_sess.session_id)
+            try:
+                await self.send_github_update(current_sess.stats)
+            except Exception as exc:
+                logger.warning("Error syncing to newly registered device: %s", exc)
 
     async def unregister_device(self, ws: Optional[WebSocket] = None) -> bool:
         """Called when the ESP32 disconnects."""
@@ -108,11 +108,6 @@ class DeviceManager:
                 return False
             self._device_ws = None
             self._device_connected = False
-            # Clean up active session when physical device disconnects (e.g. during reflashing)
-            if self._session is not None:
-                if self._session._timeout_task:
-                    self._session._timeout_task.cancel()
-                self._session = None
         logger.warning("ESP32 device disconnected: %s", self.DEVICE_ID)
         return True
 
@@ -126,20 +121,20 @@ class DeviceManager:
         client_ws: Optional[WebSocket] = None,
     ) -> Optional[Session]:
         """
-        Attempt to acquire the device for *username*.
-
-        Returns a Session on success, or None if the device is unavailable.
-        This is the critical section – only one coroutine can be here at once.
+        Acquire device ownership for *username*.
+        Seamlessly takes over if a previous session exists so users are never locked out.
         """
         async with self._lock:
             if self._session is not None:
-                # Device already owned by another user
                 logger.info(
-                    "Device busy – '%s' tried to acquire while '%s' owns it.",
-                    username,
+                    "Releasing previous session '%s' (user '%s') to acquire for '%s'",
+                    self._session.session_id,
                     self._session.username,
+                    username,
                 )
-                return None
+                if self._session._timeout_task:
+                    self._session._timeout_task.cancel()
+                self._session = None
 
             session_id = str(uuid.uuid4()).replace("-", "")[:16]
             session = Session(session_id, username, self.DEVICE_ID)
@@ -398,17 +393,24 @@ class DeviceManager:
 
         self._session.music_state = "PREPARING"
 
-        # Format compact timeline for ESP32
-        esp_timeline = [
-            {
+        # Format compact timeline for ESP32, ensuring ONLY days with contributions are in the mask
+        esp_timeline = []
+        for ev in self._session.timeline.get("events", []):
+            w = ev["week"]
+            active_days_in_event = [
+                d for d in ev.get("days", [ev["day"]])
+                if (w < len(self._session.levels) and d < len(self._session.levels[w]) and self._session.levels[w][d] > 0)
+            ]
+            if not active_days_in_event:
+                continue
+            clean_mask = sum(1 << d for d in active_days_in_event)
+            esp_timeline.append({
                 "time": ev["time"],
-                "week": ev["week"],
-                "day": ev["day"],
-                "day_mask": ev.get("day_mask", 1 << ev["day"]),
+                "week": w,
+                "day": active_days_in_event[0],
+                "day_mask": clean_mask,
                 "velocity": ev["velocity"]
-            }
-            for ev in self._session.timeline.get("events", [])
-        ]
+            })
 
         lan_ip = self._get_lan_ip()
         audio_url = f"http://{lan_ip}:8000/api/music/{self._session.session_id}/audio.wav"

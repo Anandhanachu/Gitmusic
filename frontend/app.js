@@ -315,8 +315,8 @@ async function handleConnect() {
   // Render the animated placeholder grid
   renderPlaceholderGrid();
 
-  // Enforce 3000 ms reveal animation timing in parallel with fetch
-  const animationTimer = new Promise(resolve => setTimeout(resolve, 3000));
+  // 1.5s reveal animation timing in parallel with fetch
+  const animationTimer = new Promise(resolve => setTimeout(resolve, 1500));
 
   let data = null;
   let fetchError = null;
@@ -337,20 +337,21 @@ async function handleConnect() {
     fetchError = 'Unable to reach the backend. Is it running?';
   }
 
-  // Await the ~3-second reveal animation
+  // If there's an error, exit immediately without keeping the user waiting!
+  if (fetchError) {
+    state.isAnimating = false;
+    showConnectPanel();
+    showConnectError(`✗ ${fetchError}`);
+    return;
+  }
+
+  // Await the graceful reveal animation transition
   await animationTimer;
 
   // Ignore stale request if a newer search was initiated
   if (requestId !== state.currentRequestId) return;
 
   state.isAnimating = false;
-
-  if (fetchError) {
-    // Stop cleanly and show error on connect panel; do not reveal fake grid
-    showConnectPanel();
-    showConnectError(`✗ ${fetchError}`);
-    return;
-  }
 
   // Success: reveal authentic contribution graph and session
   state.sessionId = data.session_id;
@@ -543,6 +544,7 @@ function renderContributionGrid(levels) {
       cell.className = `contrib-cell lvl-${lvl}`;
       cell.dataset.week = col;
       cell.dataset.day = row;
+      cell.dataset.level = lvl;
       cell.title = `Week ${col + 1}, Day ${row + 1}: Level ${lvl}`;
       dom.contribGrid.appendChild(cell);
     }
@@ -732,13 +734,17 @@ function syncAnimationLoop() {
           });
         }
 
-        // Highlight all selected days of this week simultaneously
+        // Highlight all selected days of this week simultaneously (strictly active days only)
         state.activeCells = [];
         days.forEach(d => {
           const targetCell = dom.contribGrid.querySelector(
             `[data-week="${currentEvent.week}"][data-day="${d}"]`
           );
           if (targetCell) {
+            // STRICT GUARD: Never highlight zero-contribution cells!
+            if (targetCell.classList.contains('lvl-0') || targetCell.dataset.level === '0') return;
+            if (state.levels && state.levels[currentEvent.week] && state.levels[currentEvent.week][d] === 0) return;
+
             targetCell.classList.add('cell-highlight');
             state.activeCells.push(targetCell);
           }

@@ -158,15 +158,6 @@ async def fetch_github_stats(username: str) -> Dict:
 # ---------------------------------------------------------------------------
 
 MOCK_USERS: Dict[str, Dict] = {
-    "demo": {
-        "username": "demo",
-        "current_streak": 24,
-        "longest_streak": 42,
-        "today_contributions": 6,
-        "total_contributions": 1248,
-        "weekly_contributions": 23,
-        "monthly_contributions": 87,
-    },
     "test": {
         "username": "test",
         "current_streak": 3,

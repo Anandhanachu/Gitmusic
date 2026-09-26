@@ -3,262 +3,345 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GitMusic – Turn your GitHub activity into sound and light</title>
+  <title>GitMusic — Light Editorial IoT Instrument</title>
   <meta name="description" content="GitMusic transforms your GitHub contribution streak into real-time sound and light through a custom IoT device powered by XIAO ESP32-S3." />
-  <meta name="theme-color" content="#0d1117" />
+  <meta name="theme-color" content="#F5F4EF" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=4" />
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 
-  <!-- ── Ambient background particles ── -->
-  <div class="bg-grid" aria-hidden="true"></div>
-  <div class="ambient-orb orb-1" aria-hidden="true"></div>
-  <div class="ambient-orb orb-2" aria-hidden="true"></div>
+  <!-- Subtle editorial paper grid texture -->
+  <div class="editorial-grid-bg" aria-hidden="true"></div>
 
-  <main class="container" role="main">
+  <div class="gitmusic-page">
 
-    <!-- ── Header ── -->
-    <header class="hero" role="banner">
-      <div class="logo-wrap">
-        <svg class="logo-icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-          <circle cx="24" cy="24" r="22" stroke="url(#grad)" stroke-width="2"/>
-          <path d="M14 30 Q19 14 24 24 Q29 34 34 18" stroke="#39d353" stroke-width="2.5" stroke-linecap="round" fill="none"/>
-          <circle cx="24" cy="24" r="3" fill="#39d353"/>
-          <defs>
-            <linearGradient id="grad" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="#39d353"/>
-              <stop offset="100%" stop-color="#58a6ff"/>
-            </linearGradient>
-          </defs>
-        </svg>
-        <h1 class="logo-text">Git<span class="accent">Music</span></h1>
-      </div>
-      <p class="tagline">Turn your GitHub activity into sound&nbsp;and&nbsp;light.</p>
-    </header>
-
-    <!-- ── Device status banner ── -->
-    <div class="device-banner" id="device-banner" role="status" aria-live="polite">
-      <span class="status-dot" id="banner-dot"></span>
-      <span id="banner-text">Connecting to server…</span>
-    </div>
-
-    <!-- ── Main card ── -->
-    <section class="card glass" aria-labelledby="connect-heading">
-
-      <!-- ── Connect form ── -->
-      <div id="connect-panel">
-        <h2 id="connect-heading" class="card-title">Connect to GitMusic</h2>
-        <p class="card-sub">Enter your GitHub username and let your contributions play.</p>
-
-        <div class="input-group">
-          <label for="username-input" class="input-label">
-            <svg class="input-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path d="M10 10a4 4 0 100-8 4 4 0 000 8zm-7 8a7 7 0 1114 0H3z"/>
-            </svg>
-            GitHub Username
-          </label>
-          <div class="input-wrap">
-            <input
-              id="username-input"
-              type="text"
-              class="text-input"
-              placeholder="e.g. torvalds"
-              maxlength="39"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="none"
-              spellcheck="false"
-              aria-required="true"
-            />
-            <span class="input-at">@</span>
-          </div>
-        </div>
-
-        <button id="connect-btn" class="btn btn-primary" type="button">
-          <span class="btn-text">Connect to GitMusic</span>
-          <span class="btn-loader" aria-hidden="true"></span>
-        </button>
-
-        <p class="error-msg hidden" id="connect-error" role="alert" aria-live="assertive"></p>
-      </div>
-
-      <!-- ── Session panel (shown after successful connect) ── -->
-      <div id="session-panel" class="hidden">
-
-        <div class="session-header">
-          <div class="session-user-meta">
-            <div class="avatar-wrap">
-              <img id="gh-avatar" src="" alt="GitHub avatar" class="gh-avatar" loading="lazy" />
-              <span class="avatar-glow" aria-hidden="true"></span>
-            </div>
-            <div>
-              <h2 id="gh-username-label" class="session-username"></h2>
-              <p class="session-sub">Session active</p>
-            </div>
-          </div>
-          <button id="back-search-btn" class="btn btn-back-search" type="button" aria-label="Search another user">
-            <svg class="back-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
-            </svg>
-            <span>Search Another User</span>
-          </button>
-        </div>
-
-        <!-- Stats grid -->
-        <div class="stats-grid" aria-label="GitHub Statistics">
-          <div class="stat-card" id="stat-streak">
-            <div class="stat-icon">🔥</div>
-            <div class="stat-value" id="val-streak">–</div>
-            <div class="stat-label">Current Streak</div>
-          </div>
-          <div class="stat-card" id="stat-longest">
-            <div class="stat-icon">🏆</div>
-            <div class="stat-value" id="val-longest">–</div>
-            <div class="stat-label">Longest Streak</div>
-          </div>
-          <div class="stat-card" id="stat-today">
-            <div class="stat-icon">📅</div>
-            <div class="stat-value" id="val-today">–</div>
-            <div class="stat-label">Today</div>
-          </div>
-          <div class="stat-card" id="stat-total">
-            <div class="stat-icon">⭐</div>
-            <div class="stat-value" id="val-total">–</div>
-            <div class="stat-label">Total Contributions</div>
-          </div>
-          <div class="stat-card" id="stat-weekly">
-            <div class="stat-icon">📊</div>
-            <div class="stat-value" id="val-weekly">–</div>
-            <div class="stat-label">This Week</div>
-          </div>
-          <div class="stat-card" id="stat-monthly">
-            <div class="stat-icon">📈</div>
-            <div class="stat-value" id="val-monthly">–</div>
-            <div class="stat-label">This Month</div>
-          </div>
-        </div>
-
-        <!-- Synchronized Piano & Contribution Timeline -->
-        <div class="music-section">
-          <div class="music-control-bar">
-            <button id="music-toggle-btn" class="btn btn-music-toggle" type="button" aria-label="Play or Stop Music">
-              <span class="btn-music-icon" id="music-btn-icon">
-                <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5v14l11-7z"/>
+    <!-- ── Editorial Top Navigation & Brand Header ── -->
+    <header class="site-header" role="banner">
+      <div class="header-inner">
+        <div class="brand-block">
+          <div class="brand-meta-badge">A VISUAL &amp; MUSICAL INTERPRETATION OF CODE</div>
+          <div class="brand-row">
+            <a href="/" class="brand-link" aria-label="GitMusic Home">
+              <span class="brand-logo-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
                 </svg>
               </span>
-              <span id="music-btn-text">Play</span>
-              <span class="music-spinner hidden" id="music-btn-spinner" aria-hidden="true"></span>
-            </button>
-            <div class="music-status-wrap">
-              <span class="music-state-badge badge-idle" id="music-state-badge">IDLE</span>
-              <span class="music-status-text" id="music-status-text">Ready to play</span>
+              <span class="brand-title">Git<span class="brand-accent">Music</span></span>
+            </a>
+            <div class="device-banner banner--connecting" id="device-banner" role="status" aria-live="polite">
+              <span class="status-dot dot--connecting" id="banner-dot"></span>
+              <span id="banner-text">Connecting to device&hellip;</span>
             </div>
           </div>
-
-          <!-- 52-week Contribution Graph Visualization (Synchronized with Piano & ESP32 LEDs) -->
-          <div class="contrib-viz" id="contrib-viz">
-            <div class="contrib-header">
-              <span class="contrib-title">Contribution Timeline</span>
-              <div class="contrib-legend">
-                <span class="legend-text">Less</span>
-                <span class="legend-cell lvl-0"></span>
-                <span class="legend-cell lvl-1"></span>
-                <span class="legend-cell lvl-2"></span>
-                <span class="legend-cell lvl-3"></span>
-                <span class="legend-cell lvl-4"></span>
-                <span class="legend-text">More</span>
-              </div>
-            </div>
-            <div class="contrib-grid-scroll">
-              <div class="contrib-grid" id="contrib-grid">
-                <!-- 52 columns × 7 rows rendered by app.js -->
-              </div>
-            </div>
-            <div class="timeline-bar-wrap">
-              <div class="timeline-bar-progress" id="timeline-progress"></div>
-            </div>
-          </div>
+          <p class="brand-tagline">Turn your GitHub activity into sound and light.</p>
         </div>
-
-        <!-- ESP32 status -->
-        <div class="device-info" aria-label="ESP32 Device Status">
-          <div class="device-info-row">
-            <span class="device-info-label">ESP32 Status</span>
-            <span class="device-badge" id="esp-badge">
-              <span class="status-dot status-dot--sm" id="esp-dot"></span>
-              <span id="esp-status-text">Connected</span>
-            </span>
-          </div>
-          <div class="device-info-row">
-            <span class="device-info-label">Device ID</span>
-            <span class="mono">gitmusic-01</span>
-          </div>
-          <div class="device-info-row">
-            <span class="device-info-label">Session ID</span>
-            <span class="mono" id="session-id-label">–</span>
-          </div>
-        </div>
-
-        <button id="disconnect-btn" class="btn btn-secondary-outline" type="button">
-          <svg class="back-icon-sm" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-            <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
-          </svg>
-          <span>Search Another User / Disconnect</span>
-        </button>
-
-        <p class="error-msg hidden" id="session-error" role="alert" aria-live="assertive"></p>
       </div>
+    </header>
 
-    </section>
+    <!-- ── Main Application Canvas ── -->
+    <main class="main-content" role="main">
 
-    <!-- ── How it works ── -->
-    <section class="how-it-works" aria-labelledby="how-heading">
-      <h2 id="how-heading" class="section-title">How it works</h2>
-      <ol class="steps-list">
-        <li class="step">
-          <span class="step-num">01</span>
-          <div>
-            <strong>Enter your GitHub username</strong>
-            <p>The backend fetches your contribution data securely – your token never leaves the server.</p>
+      <!-- ══════════════════════════════════════════════════════════ -->
+      <!-- VIEW 1: SEARCH & CONNECT PANEL (Asymmetric Split Layout)  -->
+      <!-- ══════════════════════════════════════════════════════════ -->
+      <section id="connect-panel" class="search-view" aria-label="Connect to GitMusic">
+        <div class="search-layout">
+
+          <!-- Left / Off-center: Primary Search Card -->
+          <div class="search-card">
+            <div class="card-kicker">CONNECT TO GITMUSIC</div>
+            <h2 id="connect-heading" class="search-headline">
+              Turn your GitHub<br />activity into music.
+            </h2>
+            <p class="search-desc">
+              Enter any public GitHub username and let your contribution graph become sound, rhythm, and light.
+            </p>
+
+            <form class="search-form" onsubmit="return false;" novalidate>
+              <div class="input-group">
+                <label for="username-input" class="input-meta-label">GITHUB / USERNAME</label>
+                <div class="input-wrap">
+                  <span class="input-prefix" aria-hidden="true">@</span>
+                  <input
+                    id="username-input"
+                    type="text"
+                    class="text-input"
+                    placeholder="e.g. torvalds"
+                    maxlength="39"
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="none"
+                    spellcheck="false"
+                    aria-required="true"
+                    aria-describedby="connect-error"
+                  />
+                </div>
+              </div>
+
+              <button id="connect-btn" class="btn btn-connect" type="button">
+                <span class="btn-text">Connect to GitMusic &rarr;</span>
+                <span class="btn-loader" aria-hidden="true"></span>
+              </button>
+
+              <p class="error-msg hidden" id="connect-error" role="alert" aria-live="assertive"></p>
+            </form>
+
+            <div class="card-footer-meta">
+              <span class="meta-dot">&bull;</span>
+              <span>GitHub contributions &rarr; 7-note melody &rarr; 364 LEDs</span>
+            </div>
           </div>
-        </li>
-        <li class="step">
-          <span class="step-num">02</span>
-          <div>
-            <strong>Stats are calculated server-side</strong>
-            <p>Streak, total contributions, weekly and monthly counts are computed in Python.</p>
-          </div>
-        </li>
-        <li class="step">
-          <span class="step-num">03</span>
-          <div>
-            <strong>Data flows to the ESP32</strong>
-            <p>Via a live WebSocket connection, the processed JSON is pushed to the XIAO ESP32-S3.</p>
-          </div>
-        </li>
-        <li class="step">
-          <span class="step-num">04</span>
-          <div>
-            <strong>Sound &amp; light come alive</strong>
-            <p>The ESP32 drives 364 LEDs, an OLED display, and a MAX98357A audio amplifier to turn your streak into music.</p>
-          </div>
-        </li>
-      </ol>
-    </section>
 
-  </main>
+          <!-- Right: Tactile "How To Use" Paper Note -->
+          <aside class="how-to-note" aria-label="How to use GitMusic note">
+            <div class="tape-strip" aria-hidden="true"></div>
+            <div class="note-label">HOW TO USE</div>
+            <h3 class="note-title">
+              Make your code<br />sing &rarr;
+            </h3>
 
-  <footer class="site-footer" role="contentinfo">
-    <p>GitMusic &copy; 2025 &mdash; XIAO ESP32-S3 IoT Project</p>
-    <p class="footer-links">
-      <a href="https://github.com/Anandhanachu/Gitmusic" target="_blank" rel="noopener">GitHub</a>
-    </p>
-  </footer>
+            <ol class="note-steps">
+              <li class="note-step">
+                <span class="step-num">01</span>
+                <p>Type any public GitHub username</p>
+              </li>
+              <li class="note-step">
+                <span class="step-num">02</span>
+                <p>GitMusic parses 52 weeks of contributions</p>
+              </li>
+              <li class="note-step">
+                <span class="step-num">03</span>
+                <p>Your activity reveals as an animated score</p>
+              </li>
+              <li class="note-step">
+                <span class="step-num">04</span>
+                <p>Press play to hear the melody on the ESP32</p>
+              </li>
+              <li class="note-step">
+                <span class="step-num">05</span>
+                <p>Watch synchronized LEDs light up week-by-week</p>
+              </li>
+            </ol>
 
-  <script src="app.js?v=4"></script>
+            <div class="note-handwriting-footer">
+              <div class="handwritten-cue">&ldsh; enter username here</div>
+              <div class="handwritten-hint">don&rsquo;t overthink it :)</div>
+            </div>
+          </aside>
+
+        </div>
+      </section>
+
+      <!-- ══════════════════════════════════════════════════════════ -->
+      <!-- VIEW 2: PROFILE EDITORIAL DASHBOARD (Shown on Connect)     -->
+      <!-- ══════════════════════════════════════════════════════════ -->
+      <section id="session-panel" class="user-view hidden" aria-label="GitMusic User Profile">
+
+        <!-- User Profile Header -->
+        <header class="profile-header">
+          <div class="profile-info-block">
+            <div class="avatar-ring">
+              <img id="gh-avatar" src="" alt="GitHub avatar" class="gh-avatar" />
+            </div>
+            <div class="profile-text-wrap">
+              <div class="profile-name-row">
+                <h2 id="gh-username-label" class="profile-username">&ndash;</h2>
+                <span class="session-active-pill">
+                  <span class="status-pulse-dot" aria-hidden="true"></span>
+                  Session active
+                </span>
+              </div>
+              <p class="profile-caption">Acoustic piano &amp; LED visualization from GitHub timeline</p>
+            </div>
+          </div>
+
+          <div class="profile-actions">
+            <button id="back-search-btn" class="btn btn-quiet-outline" type="button" aria-label="Search another user">
+              <svg class="back-svg-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
+              </svg>
+              <span>&larr; Search another user</span>
+            </button>
+          </div>
+        </header>
+
+        <!-- Music Player & Hardware Centerpiece Card (Prominently placed at the top for easy access without scrolling) -->
+        <section class="music-editorial-card" aria-label="Music Player & Hardware Specs">
+          <div class="music-player-grid">
+
+            <!-- Left: Play/Stop Control & Status -->
+            <div class="player-left-col">
+              <span class="section-kicker">PHYSICAL SOUND &amp; LIGHT</span>
+              <h3 class="player-title">Music from your activity</h3>
+              <p class="player-description">
+                A week-by-week piano translation. Sound plays exclusively through the ESP32 MAX98357A audio amplifier, with all selected contribution days glowing simultaneously on the 64&times;32 LED matrix.
+              </p>
+
+              <div class="player-action-strip">
+                <button id="music-toggle-btn" class="btn btn-music-play" type="button" aria-label="Play or Stop Music">
+                  <span class="btn-music-icon" id="music-btn-icon">
+                    <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
+                  </span>
+                  <span id="music-btn-text">Play</span>
+                  <span class="music-spinner hidden" id="music-btn-spinner" aria-hidden="true"></span>
+                </button>
+
+                <div class="player-status-pill">
+                  <span class="music-state-badge badge-idle" id="music-state-badge">IDLE</span>
+                  <span class="music-status-text" id="music-status-text">Ready to play on ESP32</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right: Technical Specification Chips & Device Status -->
+            <div class="player-right-col">
+              <div class="spec-matrix">
+                <div class="spec-tile">
+                  <span class="spec-label">TEMPO</span>
+                  <span class="spec-value">Dynamic BPM</span>
+                </div>
+                <div class="spec-tile">
+                  <span class="spec-label">SYSTEM</span>
+                  <span class="spec-value">7-Note Scale</span>
+                </div>
+                <div class="spec-tile">
+                  <span class="spec-label">INSTRUMENT</span>
+                  <span class="spec-value">Grand Piano</span>
+                </div>
+                <div class="spec-tile">
+                  <span class="spec-label">HARDWARE</span>
+                  <span class="spec-value">364 LEDs + I2S</span>
+                </div>
+              </div>
+
+              <div class="device-status-box">
+                <div class="device-status-top">
+                  <span class="device-status-label">HARDWARE CONNECTION</span>
+                  <span class="device-badge" id="esp-badge">
+                    <span class="status-dot status-dot--sm" id="esp-dot"></span>
+                    <span id="esp-status-text">Connected</span>
+                  </span>
+                </div>
+                <div class="device-status-bottom">
+                  <span class="mono-tag">DEVICE: gitmusic-01</span>
+                  <span class="mono-tag">SESSION: <span id="session-id-label">&ndash;</span></span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- 52-Week Contribution Graph Section (Synchronized) -->
+        <section class="contribution-section" id="contrib-viz" aria-label="Contribution Graph Visualization">
+          <div class="contrib-top-bar">
+            <div class="contrib-kicker-group">
+              <span class="section-kicker">CONTRIBUTION GRAPH</span>
+              <h3 class="contrib-section-heading">Your year in code.</h3>
+            </div>
+            <div class="contrib-legend-block" aria-label="Color scale legend">
+              <span class="legend-text">Less</span>
+              <span class="legend-cell lvl-0" title="Level 0: No activity"></span>
+              <span class="legend-cell lvl-1" title="Level 1: 1-3 contributions"></span>
+              <span class="legend-cell lvl-2" title="Level 2: 4-6 contributions"></span>
+              <span class="legend-cell lvl-3" title="Level 3: 7-9 contributions"></span>
+              <span class="legend-cell lvl-4" title="Level 4: 10+ contributions"></span>
+              <span class="legend-text">More</span>
+            </div>
+          </div>
+
+          <!-- 52 columns × 7 rows grid -->
+          <div class="contrib-grid-scroll">
+            <div class="contrib-grid" id="contrib-grid">
+              <!-- Rendered dynamically by app.js -->
+            </div>
+          </div>
+
+          <!-- Timeline scrubber bar -->
+          <div class="timeline-bar-wrap" aria-label="Playback progress scrubber">
+            <div class="timeline-bar-progress" id="timeline-progress"></div>
+          </div>
+          <div class="timeline-sub-labels">
+            <span>52 weeks ago</span>
+            <span>Synchronized timeline</span>
+            <span>Current week</span>
+          </div>
+        </section>
+
+        <!-- Editorial Statistics Grid (Hierarchical, Fewer boxes!) -->
+        <div class="stats-editorial-wrapper" aria-label="GitHub contribution statistics">
+          <!-- Featured Dominant Metric: DAY STREAK -->
+          <div class="hero-stat-card" id="stat-streak">
+            <div class="hero-stat-tag">FEATURED MOMENTUM</div>
+            <div class="hero-stat-content">
+              <div class="hero-stat-number" id="val-streak">&ndash;</div>
+              <div class="hero-stat-details">
+                <div class="hero-stat-label">DAY STREAK</div>
+                <p class="hero-stat-desc">Consecutive active coding days</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Secondary Editorial Metrics Strip -->
+          <div class="secondary-stats-strip">
+            <div class="sub-stat-cell" id="stat-longest">
+              <span class="sub-stat-kicker">LONGEST STREAK</span>
+              <span class="sub-stat-num" id="val-longest">&ndash;</span>
+              <span class="sub-stat-sub">Personal record</span>
+            </div>
+            <div class="sub-stat-cell" id="stat-today">
+              <span class="sub-stat-kicker">TODAY</span>
+              <span class="sub-stat-num" id="val-today">&ndash;</span>
+              <span class="sub-stat-sub">Contributions</span>
+            </div>
+            <div class="sub-stat-cell" id="stat-total">
+              <span class="sub-stat-kicker">ANNUAL TOTAL</span>
+              <span class="sub-stat-num" id="val-total">&ndash;</span>
+              <span class="sub-stat-sub">Past 365 days</span>
+            </div>
+            <div class="sub-stat-cell" id="stat-weekly">
+              <span class="sub-stat-kicker">THIS WEEK</span>
+              <span class="sub-stat-num" id="val-weekly">&ndash;</span>
+              <span class="sub-stat-sub">Last 7 days</span>
+            </div>
+            <div class="sub-stat-cell" id="stat-monthly">
+              <span class="sub-stat-kicker">THIS MONTH</span>
+              <span class="sub-stat-num" id="val-monthly">&ndash;</span>
+              <span class="sub-stat-sub">Last 30 days</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Secondary Bottom Action -->
+        <div class="user-page-actions">
+          <button id="disconnect-btn" class="btn btn-subtle-exit" type="button">
+            &larr; Disconnect &amp; search another profile
+          </button>
+          <p class="error-msg hidden" id="session-error" role="alert" aria-live="assertive"></p>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- ── Minimal Editorial Site Footer ── -->
+    <footer class="site-footer" role="contentinfo">
+      <div class="footer-inner">
+        <p>GitMusic &copy; 2026 &mdash; An interactive physical installation powered by XIAO ESP32-S3 &amp; HUB75 RGB LED Matrix.</p>
+        <p class="footer-links">
+          <a href="https://github.com/Anandhanachu/Gitmusic" target="_blank" rel="noopener">GitHub Repository &rarr;</a>
+        </p>
+      </div>
+    </footer>
+
+  </div>
+
+  <script src="app.js?v=9"></script>
 </body>
 </html>

@@ -144,18 +144,11 @@ def compose_from_github(
         if not active_days:
             continue
 
-        # Equal probability from 1 to 5 (20% each). Strictly NO 6 or 7 simultaneous LEDs.
-        highlight_count = rng.randint(1, 5)
-
-        if len(active_days) >= highlight_count:
-            # All selected days come from active contribution days
-            selected_days = sorted(rng.sample(active_days, highlight_count))
-        else:
-            # Include all active contribution days; fill remaining up to highlight_count from other days of that week
-            other_days = [d for d in range(7) if d not in active_days]
-            needed = highlight_count - len(active_days)
-            fill_days = rng.sample(other_days, needed) if needed <= len(other_days) else other_days
-            selected_days = sorted(active_days + fill_days)
+        # STRICT RULE: ONLY pick from active contribution days. Never select zero-contribution days!
+        # Equal probability from 1 up to min(5, active days in that week).
+        max_possible = min(5, len(active_days))
+        highlight_count = rng.randint(1, max_possible) if max_possible > 1 else 1
+        selected_days = sorted(rng.sample(active_days, highlight_count))
 
         # Bitmask for ESP32 representing all selected days simultaneously
         day_mask = sum(1 << d for d in selected_days)
@@ -189,9 +182,9 @@ def compose_from_github(
         selected_note = best_note
         last_note_pitch = selected_note
 
-        # Dynamics: velocity 60..116 based on contribution intensity
-        vel = 58 + min(max_lvl * 10, 38) + min(int(max_cnt * 1.5), 18)
-        vel = max(55, min(118, vel))
+        # Dynamics: velocity 80..127 for maximum speaker volume and tone presence
+        vel = 80 + min(max_lvl * 10, 35) + min(int(max_cnt * 1.5), 12)
+        vel = max(75, min(127, vel))
 
         # Exactly ONE event for this week: all selected days highlight SIMULTANEOUSLY during this tone!
         events.append({

@@ -16,6 +16,7 @@ Endpoints:
     /  (serves frontend/)
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -141,29 +142,13 @@ async def device_status():
 
 
 @app.post("/api/connect", response_model=ConnectResponse, tags=["Session"])
-@limiter.limit("10/minute")
+@limiter.limit("60/minute")
 async def connect(request: Request, body: ConnectRequest):
     """
-    Attempt to acquire the GitMusic device for a GitHub username.
-
-    Returns success + stats on acquisition, or an error if device is busy.
+    Acquire the GitMusic device and compute timeline for a GitHub username.
+    Always succeeds if user exists, smoothly streaming to ESP32 when connected.
     """
     username = validate_username(body.username)
-
-    # Check device availability before hitting GitHub API
-    status = device_manager.get_status_dict()
-    if status["status"] == "DISCONNECTED":
-        return ConnectResponse(
-            success=False,
-            error="DEVICE_DISCONNECTED",
-            message="The GitMusic device is not connected. Please try again later.",
-        )
-    if status["status"] == "BUSY":
-        return ConnectResponse(
-            success=False,
-            error="DEVICE_BUSY",
-            message="The GitMusic device is currently being used by another user.",
-        )
 
     # Fetch GitHub data (may raise ValueError / RuntimeError)
     try:
@@ -173,23 +158,18 @@ async def connect(request: Request, body: ConnectRequest):
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
-    # Attempt atomic device acquisition
+    # Acquire device session
     session = await device_manager.acquire_device(username)
     if session is None:
-        # Lost the race – another request just grabbed the device
-        return ConnectResponse(
-            success=False,
-            error="DEVICE_BUSY",
-            message="The GitMusic device is currently being used by another user.",
-        )
+        raise HTTPException(status_code=500, detail="Failed to initialize session.")
 
-    # Send data to ESP32
+    # Send data to ESP32 (gracefully no-ops if physical device is offline)
     await device_manager.send_github_update(stats)
 
     # Broadcast new device status to all connected website clients
     await ws_manager.broadcast({
         "type": "device_status",
-        "status": "BUSY",
+        "status": "BUSY" if device_manager.device_connected else "DISCONNECTED",
         "username": username,
     })
 
@@ -315,7 +295,16 @@ async def ws_device(ws: WebSocket):
     try:
         while True:
             try:
-                data = await ws.receive_json()
+                # 30-second timeout: ESP32 pings every 3s, so if no message
+                # arrives in 30s the TCP session is silently dead and we must
+                # clean up so the ESP32 can reconnect cleanly.
+                data = await asyncio.wait_for(ws.receive_json(), timeout=30.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "ESP32 WebSocket receive timed out (30s). "
+                    "Closing stale connection so device can reconnect."
+                )
+                break
             except WebSocketDisconnect:
                 logger.info("ESP32 WebSocket disconnected normally.")
                 break

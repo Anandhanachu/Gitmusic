@@ -129,12 +129,16 @@ def render_composition_to_wav(
     audio_buffer[:crossfade_len] += audio_buffer[total_samples:total_samples + crossfade_len] * 0.75
     
     # Truncate buffer to exact total_samples for strict timeline synchronization
-    final_audio = audio_buffer[:total_samples]
+    if total_samples <= 0:
+        final_audio = np.zeros(sample_rate, dtype=np.float32)  # 1s silence fallback
+    else:
+        final_audio = audio_buffer[:total_samples]
 
-    # Normalize to peak -1.0 dBFS
-    max_val = np.max(np.abs(final_audio))
-    if max_val > 1e-5:
-        final_audio = (final_audio / max_val) * 0.92
+    # Normalize to maximum speaker volume (0.0 dBFS, peak 0.999)
+    if len(final_audio) > 0:
+        max_val = np.max(np.abs(final_audio))
+        if max_val > 1e-5:
+            final_audio = (final_audio / max_val) * 0.999
 
     # Convert to 16-bit signed PCM integers (-32768 to 32767)
     pcm_data = (final_audio * 32767.0).astype(np.int16)
