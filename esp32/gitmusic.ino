@@ -61,18 +61,17 @@ using namespace websockets;
 // USER CONFIGURATION
 // ==========================================================================
 
-#define WIFI_SSID "Fiber"
-#define WIFI_PASSWORD "12345678"
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
 
-#define FALLBACK_SSID "Fiber"
-#define FALLBACK_PASSWORD "12345678"
+#define FALLBACK_SSID "YOUR_FALLBACK_SSID"
+#define FALLBACK_PASSWORD "YOUR_FALLBACK_PASSWORD"
 
-// Backend Host & Port -- UPDATE THIS every time your PC changes network!
-// Current IP: 10.63.92.168
-#define WS_SERVER_HOST "10.63.92.168"
+// Backend Host & Port -- Set this to your PC/server LAN IP address
+#define WS_SERVER_HOST "192.168.1.100"
 #define WS_SERVER_PORT 8000
 #define WS_SERVER_PATH "/ws/device"
-#define WS_SERVER_URL "ws://10.63.92.168:8000/ws/device"
+#define WS_SERVER_URL "ws://192.168.1.100:8000/ws/device"
 #define DEVICE_ID "gitmusic-01"
 #define RECONNECT_DELAY_MS 3000
 // 3s ping -- keeps TCP session alive, prevents uvicorn idle-close at 60s

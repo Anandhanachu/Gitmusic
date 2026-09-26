@@ -1,14 +1,36 @@
 # 🎵 GitMusic
 
-> **Turn your GitHub activity into sound and light on a 64×32 HUB75 RGB LED Matrix & I2S Synthesizer.**
+> **Turn your GitHub activity into sound and light on a 64×32 HUB75 RGB LED Matrix & I2S Synthesizer.**  
+> *Built for **INDIA FOSS 2026** as part of the **TinkerHub community** and showcased live at the TinkerHub stall.*
 
-GitMusic is an interactive IoT hardware project powered by an **ESP32 Dev Module**. When a user enters their GitHub username on the web dashboard, the backend fetches their 52-week contribution history, calculates streaks and activity levels, and streams the data in real time to the ESP32. 
+---
 
-The ESP32 transforms this data into a living audio-visual show:
-- **Top rows (0–7)**: GitHub username banner with smooth left-to-right marquee scrolling for longer usernames, framed by an animated cyan-green gradient divider line.
-- **Bottom rows (8–31)**: Exact 7×52 contribution streak graph (364 cells) rendered in authentic GitHub green palettes.
-- **Tone.js-inspired Music Sequencer**: Plays through the user's year column by column using an 8-bit pentatonic scale (C4–D5), highlighting each week as its chord sounds.
-- **Celebration Finale & Living Stats**: Triple-flash sparkle on the user's active streak with a fanfare chime, followed by a gentle "breathing" heartbeat effect on today's commit cell.
+## 🌟 Showcased at INDIA FOSS 2026 (TinkerHub Stall)
+
+GitMusic was built and exhibited as an interactive open-source hardware project at **INDIA FOSS 2026** in the **TinkerHub community stall**. Attendees could walk up to the booth, enter their GitHub username on the live web dashboard, and instantly hear their coding journey translated into an acoustic piano melody while their 52-week contribution heatmap lit up in real-time on a custom 64×32 RGB LED matrix.
+
+<p align="center">
+  <img src="assets/indiafoss_tinkerhub_stall.jpeg" alt="TinkerHub Stall at India FOSS 2026" width="32%" />
+  <img src="assets/gitmusic_live_demo.jpeg" alt="GitMusic Live Interactive Demo at India FOSS 2026" width="32%" />
+  <img src="assets/gitmusic_hardware_matrix.jpeg" alt="GitMusic 64x32 LED Matrix Close-up" width="32%" />
+</p>
+
+<p align="center">
+  <em>Left: The crowded TinkerHub stall at INDIA FOSS 2026 &bull; Center: Live interactive setup running at the booth &bull; Right: Close-up of the 64×32 LED matrix in 3D-printed enclosure showing username and contribution heatmap.</em>
+</p>
+
+---
+
+## Overview
+
+GitMusic is an interactive IoT hardware installation powered by an **ESP32 Dev Module**. When a user enters their GitHub username on the web dashboard:
+1. The **FastAPI backend** fetches their 52-week contribution history, calculates streaks and activity levels, and passes the data through an algorithmic music composition engine.
+2. The **acoustic piano synthesizer** translates active weeks into melodic chords and tones with dynamic BPM scaling.
+3. The **ESP32** synchronizes sound and light over high-speed WebSockets:
+   - **Rows 0–7**: GitHub username banner with smooth horizontal marquee scrolling for long handles, framed by an animated cyan-green divider line.
+   - **Rows 8–31**: Exact 7×52 contribution streak graph (364 cells) rendered in authentic GitHub green palettes.
+   - **MAX98357A I2S Amplifier & Speaker**: Plays the composition in real-time, highlighting each week's active days simultaneously as its corresponding chord strikes.
+   - **Celebration Finale & Living Stats**: Triple-flash sparkle on the user's active streak with a fanfare chime, followed by a gentle "breathing" heartbeat effect on today's commit cell.
 
 ---
 
@@ -29,6 +51,7 @@ The ESP32 transforms this data into a living audio-visual show:
    - [Step 5: Configure & Flash ESP32 Firmware](#step-5-configure--flash-esp32-firmware)
 6. [Interactive Flow & Animations](#interactive-flow--animations)
 7. [Troubleshooting & Diagnostics](#troubleshooting--diagnostics)
+8. [Community & Credits](#community--credits)
 
 ---
 
@@ -43,8 +66,9 @@ The ESP32 transforms this data into a living audio-visual show:
                                ▼
   ┌─────────────────────────────────────────────────────────┐
   │                 FastAPI Python Backend                  │
-  │   - GitHub GraphQL API Fetcher (or Mock Mode)           │
+  │   - GitHub API Fetcher (GraphQL + Public Fallback)      │
   │   - 52-Week Contribution Level & Streak Engine          │
+  │   - Algorithmic Composer & Physical Piano Synthesizer   │
   │   - Asyncio Single-Device Hardware Lock Session Manager  │
   └────────────────────────────┬────────────────────────────┘
                                │ WebSocket (/ws/device)
@@ -131,7 +155,7 @@ Connect the 16-pin IDC input connector (**JIN**) on the back of the HUB75 matrix
 
 ### MAX98357A I2S Amplifier to ESP32
 
-The MAX98357A digital amplifier communicates with the ESP32 over the native I2S bus:
+The MAX98357A digital amplifier communicates with the ESP32 over native I2S:
 
 | MAX98357A Pin | ESP32 Dev Module Pin | Description |
 |:-------------:|:--------------------:|:------------|
@@ -171,24 +195,32 @@ Connect your 4Ω or 8Ω speaker to the **+** and **-** screw terminal block of t
 
 ```text
 gitmusic/
+├── assets/                  # Photos from INDIA FOSS 2026 TinkerHub showcase
+│   ├── indiafoss_tinkerhub_stall.jpeg
+│   ├── gitmusic_live_demo.jpeg
+│   └── gitmusic_hardware_matrix.jpeg
+│
 ├── backend/
 │   ├── main.py              # FastAPI server, REST routes, WebSocket endpoints
-│   ├── device_manager.py    # Single-device session state & asyncio locking
-│   ├── websocket_manager.py # Broadcast updates to web clients
-│   ├── github.py            # GitHub GraphQL API client & mock data generator
+│   ├── device_manager.py    # Single-device session state & timeline orchestrator
+│   ├── composer.py          # Week-by-week musical composition engine
+│   ├── piano_synth.py       # Realistic acoustic piano synthesizer (NumPy PCM)
+│   ├── github.py            # GitHub API client (GraphQL + public endpoint fallback)
 │   ├── streak.py            # Streak calculation & weekly aggregation logic
+│   ├── websocket_manager.py # Broadcast updates to web clients
 │   ├── models.py            # Pydantic schemas
 │   ├── requirements.txt     # Python backend dependencies
 │   └── .env.example         # Template for environment configuration
 │
 ├── frontend/
-│   ├── index.html           # Dark cybernetic glassmorphism web dashboard
+│   ├── index.html           # Dark cybernetic / editorial web dashboard
 │   ├── style.css            # Responsive layout & micro-animations
-│   └── app.js               # REST fetch & client WebSocket handling
+│   └── app.js               # REST fetch & client WebSocket visualizer
 │
 ├── esp32/
-│   └── gitmusic.ino         # ESP32 Dev Module HUB75 DMA + I2S firmware
+│   └── gitmusic.ino         # ESP32 Dev Module HUB75 DMA + MAX98357A I2S firmware
 │
+├── allow_port_8000.bat      # Windows Defender Firewall helper for port 8000
 ├── render.yaml              # Render cloud deployment blueprint
 └── README.md                # Complete documentation and setup manual
 ```
@@ -199,7 +231,7 @@ gitmusic/
 
 ### Step 1: Backend Setup
 
-The backend handles GitHub API fetching, calculates streaks, manages single-user hardware locking, and streams WebSocket events.
+The backend handles GitHub data fetching, calculates streaks, manages single-user hardware locking, synthesizes acoustic piano audio, and streams WebSocket events.
 
 1. **Open a terminal in the `backend/` folder:**
    ```bash
@@ -223,14 +255,15 @@ The backend handles GitHub API fetching, calculates streaks, manages single-user
    pip install -r requirements.txt
    ```
 
-4. **Configure the environment file:**
+4. **Configure environment settings:**
    ```bash
    cp .env.example .env
    ```
    Open `.env` in your text editor:
    ```env
-   # Set your GitHub Personal Access Token (classic token with read:user scope)
-   GITHUB_TOKEN=ghp_yourActualTokenHere
+   # Optional: GitHub Personal Access Token (classic token with read:user scope)
+   # Leave empty or set MOCK_GITHUB=true to run without a token
+   GITHUB_TOKEN=your_github_token_here
    
    # Or set to true for offline development with generated mock data:
    MOCK_GITHUB=false
@@ -239,6 +272,7 @@ The backend handles GitHub API fetching, calculates streaks, manages single-user
    PORT=8000
    HOST=0.0.0.0
    ```
+   *(Note: The backend automatically falls back to GitHub's public contribution calendar endpoint if no token is provided, so a token is completely optional!)*
 
 5. **Start the backend server:**
    ```bash
@@ -254,17 +288,13 @@ The backend handles GitHub API fetching, calculates streaks, manages single-user
 
 ### Step 2: Frontend Setup
 
-The frontend is a lightweight static web interface.
+The frontend is served directly by FastAPI when you open `http://localhost:8000/`.
 
-1. Find your computer's local IP address on your Wi-Fi network:
-   - **Windows:** Run `ipconfig` in CMD/PowerShell (look for *IPv4 Address*, e.g., `192.168.1.100`).
-   - **macOS / Linux:** Run `ifconfig` or `ip a`.
-2. Open `frontend/index.html` directly in your browser, or serve it using Python:
-   ```bash
-   cd ../frontend
-   python -m http.server 3000
-   ```
-3. Open `http://localhost:3000` in your web browser. In the connection settings, point the API host to `http://localhost:8000` (or your local IP).
+- If your ESP32 is running on the local network, you can also access the interface from any phone, tablet, or laptop on the same Wi-Fi network at:
+  ```text
+  http://<YOUR_COMPUTER_IP>:8000
+  ```
+- *Tip for Windows:* Run [`allow_port_8000.bat`](allow_port_8000.bat) as Administrator if Windows Defender Firewall blocks inbound connections on port 8000.
 
 ---
 
@@ -307,14 +337,22 @@ In Arduino IDE, open **Tools ➔ Manage Libraries...** (or `Ctrl+Shift+I` / `Cmd
 
 ### Step 5: Configure & Flash ESP32 Firmware
 
-1. Open [`esp32/gitmusic.ino`](file:///c:/Users/anand/OneDrive/Desktop/gitmusic/esp32/gitmusic.ino) in Arduino IDE.
-2. Update your Wi-Fi credentials and your backend server's local LAN IP:
+1. Open [`esp32/gitmusic.ino`](esp32/gitmusic.ino) in Arduino IDE.
+2. Update your Wi-Fi credentials and your computer's local LAN IP:
    ```cpp
    // ==========================================================================
    // USER CONFIGURATION
    // ==========================================================================
-   #define WIFI_SSID           "Your_WiFi_Name"
-   #define WIFI_PASSWORD       "Your_WiFi_Password"
+   #define WIFI_SSID           "YOUR_WIFI_SSID"
+   #define WIFI_PASSWORD       "YOUR_WIFI_PASSWORD"
+
+   #define FALLBACK_SSID       "YOUR_FALLBACK_SSID"
+   #define FALLBACK_PASSWORD   "YOUR_FALLBACK_PASSWORD"
+
+   // Set this to your PC's LAN IP (e.g. 192.168.1.100)
+   #define WS_SERVER_HOST      "192.168.1.100"
+   #define WS_SERVER_PORT      8000
+   #define WS_SERVER_PATH      "/ws/device"
    #define WS_SERVER_URL       "ws://192.168.1.100:8000/ws/device"
    #define DEVICE_ID           "gitmusic-01"
    ```
@@ -323,17 +361,16 @@ In Arduino IDE, open **Tools ➔ Manage Libraries...** (or `Ctrl+Shift+I` / `Cmd
 5. Click **Upload** (`Ctrl+U` / `Cmd+U`).
 6. Once uploaded, open the **Serial Monitor** at **115200 baud**. You will see:
    ```text
-   =============================================
+   ======================================================
      GitMusic -- ESP32 Dev Module (v2.0)
-     64x32 HUB75 + MAX98357A I2S Audio
-   =============================================
-   [Matrix] HUB75 64x32 initialized.
-   [I2S] MAX98357A initialized (BCK=18, LRCK=33, DIN=22).
-   [WiFi] Connecting to "Your_WiFi_Name"......
-   [WiFi] Connected! IP: 192.168.1.150
-   [WS] Connecting to ws://192.168.1.100:8000/ws/device ...
-   [WS] Connected to backend.
-   [WS] Registered as 'gitmusic-01'
+     64x32 HUB75 Matrix + MAX98357A I2S Synthesizer
+   ======================================================
+   [1/4] MATRIX  : Initializing HUB75 (64x32, 1/16 scan)... OK!
+   [2/4] AUDIO   : Initializing MAX98357A I2S (44.1 kHz)... OK!
+   [3/4] WIFI    : Starting connection... Connected! IP: 192.168.1.150
+   [4/4] BACKEND : Connecting to ws://192.168.1.100:8000/ws/device ... Connected!
+   [5/5] AUDIO TASK: Spawned background stream player on Core 0
+   STATUS: SYSTEM INITIALIZED & READY
    ```
 
 ---
@@ -341,37 +378,28 @@ In Arduino IDE, open **Tools ➔ Manage Libraries...** (or `Ctrl+Shift+I` / `Cmd
 ## Interactive Flow & Animations
 
 ### 1. Ambient Idle Mode
-- When no active session is running, the panel displays a gentle, hypnotic 60 FPS rainbow wave across all 2048 LEDs.
-- A subtle "GITMUSIC" watermark glows in the center.
-- An ambient pentatonic bass note plays once every 15 seconds to signal that the device is online and ready.
+- When no active session is running, the panel displays an animated plasma shimmer across all 2048 LEDs.
+- A "GITMUSIC" marquee gently animates across rows 0–7.
+- Periodic breathing pulses indicate the device is healthy and listening.
 
 ### 2. Live Sequencer Sweep (New User Session)
-- When a user enters their GitHub handle on the website, the ESP32 locks the session and receives the user's data.
-- The username appears on rows 0–7 (centering short names or automatically scrolling long names).
+- When an attendee enters their GitHub handle, the ESP32 locks the session and receives the user's data.
+- The username appears on rows 0–7 (centering short names or smoothly scrolling longer handles).
 - An animated green-to-cyan gradient divider line frames the top header.
 - **Tone.js Column Sweep**: The matrix reveals all 52 weeks column by column from oldest to newest:
-  - Each week column briefly flashes in neon mint/cyan.
-  - An authentic pentatonic note triggers based on that week's maximum commit density:
-    - `Level 0`: Silence
-    - `Level 1`: C4 (261.63 Hz)
-    - `Level 2`: D4 (293.66 Hz)
-    - `Level 3`: E4 (329.63 Hz)
-    - `Level 4`: G4 (392.00 Hz)
+  - Each active week column flashes in neon mint/cyan.
+  - Active contribution days within that week light up simultaneously.
+  - An authentic acoustic tone triggers based on commit activity.
 
 ### 3. Grand Finale Celebration
 - When the sweep finishes at week 51:
-  - The current week and active streak columns flash 3 times with a sparkling gold-white effect (`RGB 240, 240, 180`).
-  - An ascending fanfare chord chimes (`A4 ➔ C5 ➔ D5`).
+  - The active streak columns flash 3 times with a sparkling gold-white effect.
+  - An ascending fanfare chord chimes.
 
 ### 4. Living Stats View
-- The 52×7 graph settles into authentic GitHub contribution shades:
-  - Level 0: Dim background dot (`#0a0a0a`)
-  - Level 1: Dark green (`#0e4429`)
-  - Level 2: Mid green (`#006d32`)
-  - Level 3: Bright green (`#26a641`)
-  - Level 4: Vivid emerald (`#39d353`)
-- **Heartbeat Today Cell**: If the user has made commits today, cell `[51, 6]` gently pulses in brightness every 1.5 seconds.
-- **Streak Shimmer Wave**: Every 5 seconds, an energetic shimmer wave travels across the active streak weeks.
+- The 52×7 graph settles into authentic GitHub contribution shades (Levels 0–4).
+- **Heartbeat Today Cell**: If the user has made commits today, today's cell gently pulses in brightness every 1.5 seconds.
+- **Streak Shimmer Wave**: Shimmer pulses travel across active streak weeks.
 
 ---
 
@@ -382,14 +410,22 @@ In Arduino IDE, open **Tools ➔ Manage Libraries...** (or `Ctrl+Shift+I` / `Cmd
 | **Display flickers, jitters, or displays random snow** | ESP32 CPU frequency is under 240 MHz or clock phase is inverted | Set CPU Frequency to **240 MHz** in Arduino IDE Tools. Ensure `mxconfig.clkphase = false` and `mxconfig.latch_blanking = 2`. |
 | **Only the top 16 rows light up or bottom 16 rows duplicate** | Incorrect row scan setting or E pin miswired | Panel is 1/16 scan: ensure `mxconfig.gpio.e = -1` (unconnected). Check ribbon connector orientation. |
 | **Colors are wrong (e.g. Red appears Blue)** | R/G/B pin swapping on ribbon cable | Verify GPIO assignments: R1=25, G1=26, B1=27, R2=14, G2=12, B2=13. |
-| **LEDs dim or ESP32 brownout restarts when matrix flashes** | Insufficient 5V power supply capacity | Power the matrix with an external **5V 3A+ power supply**. Do not power 2048 LEDs from the ESP32 5V/VIN pin. |
+| **LEDs dim or ESP32 brownout restarts when matrix flashes** | Insufficient 5V power supply capacity | Power the matrix with an external **5V 3A+ power supply**. Do not power 2048 LEDs directly from the ESP32 5V/VIN pin. |
 | **No sound from the speaker** | Incorrect I2S pin assignments or missing ground | Verify pins: BCLK=18, LRCK=33, DIN=22. Ensure MAX98357A GND is tied to ESP32 GND. Verify `SAMPLE_RATE = 44100`. |
 | **Audio has loud buzz or clicking** | Floating GND or shared noisy 5V rail | Ensure a solid, thick ground wire between the ESP32 and amplifier. Connect MAX98357A GAIN to GND for 12dB quiet mode. |
-| **`[WS] Failed - will retry` in Serial Monitor** | Wrong IP address or firewall blocking port 8000 | Verify your computer's LAN IP address. On Windows, allow port 8000 through Windows Defender Firewall. |
+| **`[WS] Failed - will retry` in Serial Monitor** | Wrong IP address or firewall blocking port 8000 | Verify your computer's LAN IP address. On Windows, run [`allow_port_8000.bat`](allow_port_8000.bat) as Administrator. |
 | **`[JSON] Error: ...`** | ArduinoJson version discrepancy | The firmware includes backward-compatible macros for both ArduinoJson v6 and v7. Update to the latest ArduinoJson via Library Manager. |
+
+---
+
+## Community & Credits
+
+- Built for **[INDIA FOSS 2026](https://indiafoss.net/)** as part of the **[TinkerHub Community](https://tinkerhub.org/)**.
+- Displayed and demonstrated live at the TinkerHub community stall at FOSS.
+- Inspired by the concept of tactile data physicalization and algorithmic music generation.
 
 ---
 
 ## License
 
-MIT License. Designed with ❤️ for the open-source community.
+MIT License. Crafted with ❤️ for the open-source community.
