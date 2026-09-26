@@ -61,22 +61,21 @@ using namespace websockets;
 // USER CONFIGURATION
 // ==========================================================================
 
-#define WIFI_SSID "Ze"
-#define WIFI_PASSWORD "sss123456"
+#define WIFI_SSID "Fiber"
+#define WIFI_PASSWORD "12345678"
 
 #define FALLBACK_SSID "Fiber"
 #define FALLBACK_PASSWORD "12345678"
 
-// Backend Host & Port (Your computer's current IP is 10.63.92.168)
-// IMPORTANT: Update this IP any time your PC changes networks!
+// Backend Host & Port -- UPDATE THIS every time your PC changes network!
+// Current IP: 10.63.92.168
 #define WS_SERVER_HOST "10.63.92.168"
 #define WS_SERVER_PORT 8000
 #define WS_SERVER_PATH "/ws/device"
 #define WS_SERVER_URL "ws://10.63.92.168:8000/ws/device"
 #define DEVICE_ID "gitmusic-01"
 #define RECONNECT_DELAY_MS 3000
-// Ping every 3 seconds -- keeps the TCP session alive through NAT and
-// prevents uvicorn from closing a silent WebSocket after ~60s idle.
+// 3s ping -- keeps TCP session alive, prevents uvicorn idle-close at 60s
 #define PING_INTERVAL_MS 3000
 
 // Compatibility macro for ArduinoJson v6 vs v7
@@ -882,8 +881,8 @@ void initI2S() {
   cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
   cfg.communication_format = I2S_FORMAT_DEFAULT;
   cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-  cfg.dma_buf_count = 8;
-  cfg.dma_buf_len = 256; // 256 samples @ 44.1kHz = 46.4ms buffer headroom
+  cfg.dma_buf_count = 12;
+  cfg.dma_buf_len = 512; // 512 samples @ 44.1kHz = 11.6ms per buffer, 139ms total headroom
   cfg.use_apll = false;
   cfg.tx_desc_auto_clear = true;
 
@@ -912,8 +911,7 @@ void initI2S() {
 // ==========================================================================
 
 void playNote(float freq, int durationMs, float intensity) {
-  // If active synchronized piano stream is running on Core 0, do not collide
-  // with stream
+  // Do NOT interfere with the synchronized WAV stream on Core 0
   if (playbackState == STATE_PLAYING)
     return;
   if (freq <= 0.0f || durationMs <= 0)
@@ -921,15 +919,20 @@ void playNote(float freq, int durationMs, float intensity) {
 
   const int totalSamples = (SAMPLE_RATE * durationMs) / 1000;
 
-  // MAXIMUM VOLUME: Full int16 range (32767), no floor.
-  // Piano-like tone: fundamental + 2nd harmonic (0.55x) + 3rd harmonic (0.25x)
-  // This sounds richer and louder than a bare sine wave on MAX98357A.
-  const float amp0 = 32767.0f * max(0.7f, min(1.0f, intensity));  // fundamental
-  const float amp1 = amp0 * 0.55f;   // 2nd harmonic -- piano brightness
-  const float amp2 = amp0 * 0.25f;   // 3rd harmonic -- body/warmth
+  // ===== ABSOLUTE MAXIMUM VOLUME =====
+  // Full int16 range = 32767 DAC ceiling, no floor.
+  // 4-harmonic piano model: weightings sum to 2.02, so we normalize to keep
+  // the total mix peak exactly at 32767 -- maximum loudness, zero distortion.
+  const float masterVol = 32767.0f;
+  const float mixNorm   = 1.0f / 2.02f;  // normalizer for 4-harmonic mix
+  const float amp0 = masterVol * mixNorm;          // fundamental
+  const float amp1 = masterVol * mixNorm * 0.60f;  // 2nd harmonic (piano brightness)
+  const float amp2 = masterVol * mixNorm * 0.30f;  // 3rd harmonic (body/warmth)
+  const float amp3 = masterVol * mixNorm * 0.12f;  // 4th harmonic (attack sparkle)
   const float twoPiF  = 2.0f * PI * freq;
   const float twoPiF2 = twoPiF * 2.0f;
   const float twoPiF3 = twoPiF * 3.0f;
+  const float twoPiF4 = twoPiF * 4.0f;
 
   const int CHUNK = 128;
   int16_t buf[CHUNK];
@@ -941,25 +944,26 @@ void playNote(float freq, int durationMs, float intensity) {
     for (int i = 0; i < chunk; i++) {
       float t    = (float)(written + i) / (float)SAMPLE_RATE;
       float frac = (float)(written + i) / (float)totalSamples;
-      // ADSR-lite envelope: 8% attack, 15% decay to 0.85, sustain, 18% release
-      float env = 1.0f;
-      if (frac < 0.08f)        env = frac / 0.08f;
-      else if (frac < 0.23f)  env = 1.0f - 0.15f * ((frac - 0.08f) / 0.15f);
-      else if (frac > 0.82f)  env = (1.0f - frac) / 0.18f;
-      else                    env = 0.85f;
+      // ADSR: punchy 6ms attack, slight decay to 0.90 sustain, clean release
+      float env;
+      if      (frac < 0.06f) env = frac / 0.06f;
+      else if (frac < 0.20f) env = 1.0f - 0.10f * ((frac - 0.06f) / 0.14f);
+      else if (frac > 0.85f) env = 0.90f * (1.0f - frac) / 0.15f;
+      else                   env = 0.90f;
       float sample = env * (
           amp0 * sinf(twoPiF  * t) +
           amp1 * sinf(twoPiF2 * t) +
-          amp2 * sinf(twoPiF3 * t)
+          amp2 * sinf(twoPiF3 * t) +
+          amp3 * sinf(twoPiF4 * t)
       );
-      // Hard-clip to prevent DAC distortion at max amplitude
+      // Hard-clip safety guard (should never trigger with correct normalization)
       if (sample >  32767.0f) sample =  32767.0f;
       if (sample < -32767.0f) sample = -32767.0f;
       buf[i] = (int16_t)sample;
     }
     i2s_write(I2S_PORT, buf, chunk * sizeof(int16_t), &bytesOut, portMAX_DELAY);
     written += chunk;
-    wsClient.poll(); // Keep WebSocket connection alive during note playback!
+    wsClient.poll(); // Keep WebSocket alive during note synthesis
   }
 }
 
